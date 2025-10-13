@@ -7,15 +7,24 @@ import {
     CustomAuthPublicClientApplication,
     ICustomAuthPublicClientApplication,
     SignInCompletedState,
+    AuthMethodRegistrationRequiredState,
+    AuthMethodVerificationRequiredState,
+    AuthenticationMethod,
+    MfaAwaitingState,
+    MfaVerificationRequiredState,
 } from "@azure/msal-browser/custom-auth";
 import { customAuthConfig } from "../../config/auth-config";
 import { styles } from "./styles/styles";
 import { InitialForm } from "./components/InitialForm";
-import { PasswordForm } from "./components/PasswordForm";
-import { CodeForm } from "./components/CodeForm";
-import { UserInfo } from "./components/UserInfo";
+import { PasswordForm } from "../shared/components/PasswordForm";
+import { CodeForm } from "../shared/components/CodeForm";
+import { AuthMethodRegistrationForm } from "../shared/components/AuthMethodRegistrationForm";
+import { AuthMethodRegistrationChallengeForm } from "../shared/components/AuthMethodRegistrationChallengeForm";
 import { SignInCodeRequiredState, SignInPasswordRequiredState } from "@azure/msal-browser/custom-auth";
 import { PopupRequest } from "@azure/msal-browser";
+import { UserInfo } from "./components/UserInfo";
+import { MfaAuthMethodSelectionForm } from "../shared/components/MfaAuthMethodSelectionForm";
+import { MfaChallengeForm } from "../shared/components/MfaChallengeForm";
 
 export default function SignIn() {
     const [authClient, setAuthClient] = useState<ICustomAuthPublicClientApplication | null>(null);
@@ -29,6 +38,19 @@ export default function SignIn() {
     const [loadingAccountStatus, setLoadingAccountStatus] = useState(true);
     const [isSignedIn, setCurrentSignInStatus] = useState(false);
     const [resendCountdown, setResendCountdown] = useState(0);
+
+    // Auth method registration states
+    const [authMethodsForRegistration, setAuthMethodsForRegistration] = useState<AuthenticationMethod[]>([]);
+    const [selectedAuthMethodForRegistration, setSelectedAuthMethodForRegistration] = useState<
+        AuthenticationMethod | undefined
+    >(undefined);
+    const [verificationContactForRegistration, setVerificationContactForRegistration] = useState("");
+    const [challengeForRegistration, setChallengeForRegistration] = useState("");
+
+    // MFA states
+    const [mfaAuthMethods, setMfaAuthMethods] = useState<AuthenticationMethod[]>([]);
+    const [selectedMfaAuthMethod, setSelectedMfaAuthMethod] = useState<AuthenticationMethod | undefined>(undefined);
+    const [mfaChallenge, setMfaChallenge] = useState("");
 
     useEffect(() => {
         const initializeApp = async () => {
@@ -118,6 +140,21 @@ export default function SignIn() {
 
         if (result.isCompleted()) {
             setData(result.data);
+            setCurrentSignInStatus(true);
+        }
+
+        // Check for auth method registration requirement
+        if (result.isAuthMethodRegistrationRequired()) {
+            setAuthMethodsForRegistration(result.state.getAuthMethods());
+            // Set default selection to the first auth method
+            const methods = result.state.getAuthMethods();
+            setSelectedAuthMethodForRegistration(methods.length > 0 ? methods[0] : undefined);
+        }
+
+        if (result.isMfaRequired()) {
+            const methods = result.state.getAuthMethods();
+            setMfaAuthMethods(methods);
+            setSelectedMfaAuthMethod(methods.length > 0 ? methods[0] : undefined);
         }
 
         setSignInState(result.state);
@@ -145,7 +182,23 @@ export default function SignIn() {
 
             if (result.isCompleted()) {
                 setData(result.data);
+                setCurrentSignInStatus(true);
+                setSignInState(result.state);
+            }
 
+            // Check for auth method registration requirement
+            if (result.isAuthMethodRegistrationRequired()) {
+                const methods = result.state.getAuthMethods();
+                setAuthMethodsForRegistration(methods);
+                setSelectedAuthMethodForRegistration(methods.length > 0 ? methods[0] : undefined);
+                setSignInState(result.state);
+            }
+
+            // Check for MFA requirement
+            if (result.isMfaRequired()) {
+                const methods = result.state.getAuthMethods();
+                setMfaAuthMethods(methods);
+                setSelectedMfaAuthMethod(methods.length > 0 ? methods[0] : undefined);
                 setSignInState(result.state);
             }
         }
@@ -175,6 +228,22 @@ export default function SignIn() {
                 setData(result.data);
                 setSignInState(result.state);
             }
+
+            // Check for auth method registration requirement
+            if (result.isAuthMethodRegistrationRequired()) {
+                const methods = result.state.getAuthMethods();
+                setAuthMethodsForRegistration(methods);
+                setSelectedAuthMethodForRegistration(methods.length > 0 ? methods[0] : undefined);
+                setSignInState(result.state);
+            }
+
+            // Check for MFA requirement
+            if (result.isMfaRequired()) {
+                const methods = result.state.getAuthMethods();
+                setMfaAuthMethods(methods);
+                setSelectedMfaAuthMethod(methods.length > 0 ? methods[0] : undefined);
+                setSignInState(result.state);
+            }
         }
 
         setLoading(false);
@@ -194,7 +263,7 @@ export default function SignIn() {
             } else {
                 setSignInState(state);
                 setResendCountdown(30);
-                
+
                 const timer = setInterval(() => {
                     setResendCountdown((prev) => {
                         if (prev <= 1) {
@@ -210,13 +279,177 @@ export default function SignIn() {
         setLoading(false);
     };
 
+    const handleAuthMethodRegistrationSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
+        setLoading(true);
+
+        if (!selectedAuthMethodForRegistration || !verificationContactForRegistration) {
+            setError("Please select an authentication method and enter a verification contact.");
+            setLoading(false);
+            return;
+        }
+
+        if (signInState instanceof AuthMethodRegistrationRequiredState) {
+            const result = await signInState.challengeAuthMethod({
+                authMethodType: selectedAuthMethodForRegistration,
+                verificationContact: verificationContactForRegistration,
+            });
+
+            if (result.isFailed()) {
+                if (result.error?.isInvalidInput()) {
+                    setError("Incorrect verification contact.");
+                } else if (result.error?.isVerificationContactBlocked()) {
+                    setError(
+                        "The verification contact is blocked. Consider using a different contact or a different authentication method"
+                    );
+                } else {
+                    setError(
+                        result.error?.errorData?.errorDescription ||
+                            "An error occurred while verifying the authentication method"
+                    );
+                }
+            }
+
+            if (result.isCompleted()) {
+                setData(result.data);
+                setCurrentSignInStatus(true);
+                setSignInState(result.state);
+            }
+
+            if (result.isVerificationRequired()) {
+                setSignInState(result.state);
+            }
+        }
+
+        setLoading(false);
+    };
+
+    const handleAuthMethodRegistrationChallengeSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
+        setLoading(true);
+
+        if (!challengeForRegistration) {
+            setError("Please enter a code.");
+            setLoading(false);
+            return;
+        }
+
+        if (signInState instanceof AuthMethodVerificationRequiredState) {
+            const result = await signInState.submitChallenge(challengeForRegistration);
+
+            if (result.isFailed()) {
+                if (result.error?.isIncorrectChallenge()) {
+                    setError("Incorrect code.");
+                } else {
+                    setError(
+                        result.error?.errorData?.errorDescription ||
+                            "An error occurred while verifying the challenge response"
+                    );
+                }
+            }
+
+            if (result.isCompleted()) {
+                setData(result.data);
+                setCurrentSignInStatus(true);
+                setSignInState(result.state);
+            }
+        }
+
+        setLoading(false);
+    };
+
+    const handleMfaAuthMethodSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
+        setLoading(true);
+
+        if (!selectedMfaAuthMethod) {
+            setError("Please select an authentication method.");
+            setLoading(false);
+            return;
+        }
+
+        if (signInState instanceof MfaAwaitingState) {
+            const result = await signInState.requestChallenge(selectedMfaAuthMethod.id);
+
+            if (result.isFailed()) {
+                if (result.error?.isInvalidInput()) {
+                    setError("Incorrect verification contact.");
+                } else {
+                    setError(
+                        result.error?.errorData?.errorDescription ||
+                            "An error occurred while verifying the authentication method"
+                    );
+                }
+            }
+
+            if (result.isVerificationRequired()) {
+                setSignInState(result.state);
+            }
+        }
+
+        setLoading(false);
+    };
+
+    const handleMfaChallengeSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
+        setLoading(true);
+
+        if (!mfaChallenge) {
+            setError("Please enter a code.");
+            setLoading(false);
+            return;
+        }
+
+        if (signInState instanceof MfaVerificationRequiredState) {
+            const result = await signInState.submitChallenge(mfaChallenge);
+
+            if (result.isFailed()) {
+                if (result.error?.isIncorrectChallenge()) {
+                    setError("Incorrect code.");
+                } else {
+                    setError(
+                        result.error?.errorData?.errorDescription ||
+                            "An error occurred while verifying the challenge response"
+                    );
+                }
+            }
+
+            if (result.isCompleted()) {
+                setData(result.data);
+                setCurrentSignInStatus(true);
+                setSignInState(result.state);
+            }
+        }
+
+        setLoading(false);
+    };
+
+    const getPlaceholderTextForVerificationContact = (): string => {
+        if (!selectedAuthMethodForRegistration) {
+            return "Enter your contact information";
+        }
+
+        const channel = selectedAuthMethodForRegistration.challenge_channel?.toLowerCase();
+        if (channel === "email") {
+            return "Enter your email for verification";
+        } else if (channel === "sms" || channel === "phone") {
+            return "Enter your phone number for verification";
+        } else {
+            return "Enter your contact information for verification";
+        }
+    };
+
     const renderForm = () => {
         if (loadingAccountStatus) {
             return;
         }
 
         if (isSignedIn || signInState instanceof SignInCompletedState) {
-            return <div style={styles.signed_in_msg}>Sign up completed! Sign in automatically complete.</div>;
+            return <UserInfo userData={data} />;
         }
 
         if (signInState instanceof SignInPasswordRequiredState) {
@@ -226,12 +459,76 @@ export default function SignIn() {
                     password={password}
                     setPassword={setPassword}
                     loading={loading}
+                    submitButtonText="Sign In"
+                    submitButtonLoadingText="Signing in..."
                 />
             );
         }
 
         if (signInState instanceof SignInCodeRequiredState) {
-            return <CodeForm onSubmit={handleCodeSubmit} code={code} setCode={setCode} loading={loading} onResendCode={handleResendCode} resendCountdown={resendCountdown} />;
+            return (
+                <CodeForm
+                    onSubmit={handleCodeSubmit}
+                    code={code}
+                    setCode={setCode}
+                    loading={loading}
+                    onResendCode={handleResendCode}
+                    resendCountdown={resendCountdown}
+                />
+            );
+        }
+
+        if (signInState instanceof AuthMethodRegistrationRequiredState) {
+            return (
+                <AuthMethodRegistrationForm
+                    onSubmit={handleAuthMethodRegistrationSubmit}
+                    authMethods={authMethodsForRegistration}
+                    selectedAuthMethod={selectedAuthMethodForRegistration}
+                    setSelectedAuthMethod={setSelectedAuthMethodForRegistration}
+                    verificationContact={verificationContactForRegistration}
+                    setVerificationContact={setVerificationContactForRegistration}
+                    loading={loading}
+                    getPlaceholderText={getPlaceholderTextForVerificationContact}
+                    styles={styles}
+                />
+            );
+        }
+
+        if (signInState instanceof AuthMethodVerificationRequiredState) {
+            return (
+                <AuthMethodRegistrationChallengeForm
+                    onSubmit={handleAuthMethodRegistrationChallengeSubmit}
+                    challenge={challengeForRegistration}
+                    setChallenge={setChallengeForRegistration}
+                    loading={loading}
+                    styles={styles}
+                />
+            );
+        }
+
+        if (signInState instanceof MfaAwaitingState) {
+            return (
+                <MfaAuthMethodSelectionForm
+                    onSubmit={handleMfaAuthMethodSubmit}
+                    authMethods={mfaAuthMethods}
+                    selectedAuthMethod={selectedMfaAuthMethod}
+                    setSelectedAuthMethod={setSelectedMfaAuthMethod}
+                    loading={loading}
+                    styles={styles}
+                />
+            );
+        }
+
+        if (signInState instanceof MfaVerificationRequiredState) {
+            return (
+                <MfaChallengeForm
+                    onSubmit={handleMfaChallengeSubmit}
+                    challenge={mfaChallenge}
+                    setChallenge={setMfaChallenge}
+                    loading={loading}
+                    styles={styles}
+                />
+            );
         }
 
         return <InitialForm onSubmit={startSignIn} username={username} setUsername={setUsername} loading={loading} />;

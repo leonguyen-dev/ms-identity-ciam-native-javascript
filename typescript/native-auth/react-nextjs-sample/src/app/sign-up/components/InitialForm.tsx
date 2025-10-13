@@ -1,21 +1,5 @@
 import { styles } from "../styles/styles";
-
-interface InitialFormProps {
-    onSubmit: (e: React.FormEvent) => Promise<void>;
-    firstName: string;
-    setFirstName: (value: string) => void;
-    lastName: string;
-    setLastName: (value: string) => void;
-    jobTitle: string;
-    setJobTitle: (value: string) => void;
-    city: string;
-    setCity: (value: string) => void;
-    country: string;
-    setCountry: (value: string) => void;
-    email: string;
-    setEmail: (value: string) => void;
-    loading: boolean;
-}
+import type { SignUpInitialFormProps } from "../types/formProperties";
 
 export function InitialForm({
     onSubmit,
@@ -32,7 +16,7 @@ export function InitialForm({
     email,
     setEmail,
     loading,
-}: InitialFormProps) {
+}: SignUpInitialFormProps) {
     return (
         <form onSubmit={onSubmit} style={styles.form}>
             <input

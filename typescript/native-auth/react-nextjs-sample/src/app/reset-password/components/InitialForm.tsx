@@ -1,13 +1,7 @@
 import { styles } from "../styles/styles";
+import type { ResetPasswordInitialFormProps } from "../types/formProperties";
 
-interface InitialFormProps {
-    onSubmit: (e: React.FormEvent) => Promise<void>;
-    email: string;
-    setEmail: (value: string) => void;
-    loading: boolean;
-}
-
-export function InitialForm({ onSubmit, email, setEmail, loading }: InitialFormProps) {
+export function InitialForm({ onSubmit, email, setEmail, loading }: ResetPasswordInitialFormProps) {
     return (
         <form onSubmit={onSubmit} style={styles.form}>
             <input
