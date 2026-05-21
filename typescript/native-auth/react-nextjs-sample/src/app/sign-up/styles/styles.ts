@@ -84,4 +84,24 @@ export const styles = {
         display: "flex",
         alignItems: "center",
     },
+    label: {
+        fontSize: "16px",
+        fontWeight: 500,
+        color: "#374151",
+        textAlign: "center" as const,
+        marginBottom: "5px",
+    },
+    fieldLabel: {
+        fontSize: "13px",
+        color: "#6b7280",
+        marginBottom: "-10px",
+    },
+    checkboxLabel: {
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        fontSize: "14px",
+        color: "#374151",
+        cursor: "pointer",
+    },
 } as const;
