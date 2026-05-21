@@ -3,13 +3,18 @@
 import { useEffect, useState } from "react";
 import { customAuthConfig } from "../../config/auth-config";
 import { styles } from "./styles/styles";
-import { InitialForm } from "./components/InitialForm";
+import { EmailStep } from "./components/EmailStep";
+import { EmailCodeStep } from "./components/EmailCodeStep";
+import { DetailsStep } from "./components/DetailsStep";
+import { MobileStep } from "./components/MobileStep";
+import { SmsCodeStep } from "./components/SmsCodeStep";
 import {
     AuthFlowStateBase,
     CustomAuthAccountData,
     CustomAuthPublicClientApplication,
     ICustomAuthPublicClientApplication,
     SignInCompletedState,
+    SignUpAttributesRequiredState,
     SignUpCodeRequiredState,
     SignUpCompletedState,
     SignUpPasswordRequiredState,
@@ -19,43 +24,39 @@ import {
     AuthenticationMethod,
     MfaAwaitingState,
     MfaVerificationRequiredState,
+    InvalidArgumentError,
 } from "@azure/msal-browser/custom-auth";
-import { CodeForm } from "../shared/components/CodeForm";
-import { PasswordForm } from "../shared/components/PasswordForm";
-import { AuthMethodRegistrationForm } from "../shared/components/AuthMethodRegistrationForm";
-import { AuthMethodRegistrationChallengeForm } from "../shared/components/AuthMethodRegistrationChallengeForm";
 import { MfaAuthMethodSelectionForm } from "../shared/components/MfaAuthMethodSelectionForm";
 import { MfaChallengeForm } from "../shared/components/MfaChallengeForm";
-import { PopupRequest } from "@azure/msal-browser";
 
-export default function SignUpPassword() {
+type UiStep = "email" | "emailCode" | "details";
+
+export default function SignUpPage() {
     const [authClient, setAuthClient] = useState<ICustomAuthPublicClientApplication | null>(null);
-    const [firstName, setFirstName] = useState("");
-    const [lastName, setLastName] = useState("");
-    const [jobTitle, setJobTitle] = useState("");
-    const [city, setCity] = useState("");
-    const [country, setCountry] = useState("");
+
+    const [uiStep, setUiStep] = useState<UiStep>("email");
+
     const [email, setEmail] = useState("");
-    const [flatUsername, setFlatUsername] = useState("");
+    const [emailCode, setEmailCode] = useState("");
     const [password, setPassword] = useState("");
-    const [code, setCode] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
+    const [givenName, setGivenName] = useState("");
+    const [familyName, setFamilyName] = useState("");
+    const [dateOfBirth, setDateOfBirth] = useState("");
+    const [termsAccepted, setTermsAccepted] = useState(false);
+    const [mobileNumber, setMobileNumber] = useState("");
+    const [smsCode, setSmsCode] = useState("");
+
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
     const [signUpState, setSignUpState] = useState<AuthFlowStateBase | null>(null);
     const [loadingAccountStatus, setLoadingAccountStatus] = useState(true);
     const [isSignedIn, setSignInState] = useState(false);
-    const [resendCountdown, setResendCountdown] = useState(0);
     const [data, setData] = useState<CustomAuthAccountData | undefined>(undefined);
 
-    // Auth method registration states
-    const [authMethodsForRegistration, setAuthMethodsForRegistration] = useState<AuthenticationMethod[]>([]);
-    const [selectedAuthMethodForRegistration, setSelectedAuthMethodForRegistration] = useState<
-        AuthenticationMethod | undefined
-    >(undefined);
-    const [verificationContactForRegistration, setVerificationContactForRegistration] = useState("");
-    const [challengeForRegistration, setChallengeForRegistration] = useState("");
+    const [phoneAuthMethod, setPhoneAuthMethod] = useState<AuthenticationMethod | undefined>(undefined);
 
-    // MFA states
+    // MFA states (kept for future SMS MFA sign-in flow)
     const [mfaAuthMethods, setMfaAuthMethods] = useState<AuthenticationMethod[]>([]);
     const [selectedMfaAuthMethod, setSelectedMfaAuthMethod] = useState<AuthenticationMethod | undefined>(undefined);
     const [mfaChallenge, setMfaChallenge] = useState("");
@@ -74,203 +75,270 @@ export default function SignUpPassword() {
             if (!authClient) return;
 
             const accountResult = authClient.getCurrentAccount();
-
             if (accountResult.isCompleted()) {
                 setSignInState(true);
             }
-
             setLoadingAccountStatus(false);
         };
 
         checkAccount();
     }, [authClient]);
 
-    const handleInitialSubmit = async (e: React.FormEvent) => {
+    const resetSignUpToStart = (message: string) => {
+        setSignUpState(null);
+        setUiStep("email");
+        setEmailCode("");
+        setPassword("");
+        setConfirmPassword("");
+        setGivenName("");
+        setFamilyName("");
+        setDateOfBirth("");
+        setTermsAccepted(false);
+        setMobileNumber("");
+        setSmsCode("");
+        setMfaAuthMethods([]);
+        setSelectedMfaAuthMethod(undefined);
+        setMfaChallenge("");
+        setPhoneAuthMethod(undefined);
+        setError(message);
+    };
+
+    const handleSubmitException = (err: unknown, fallback: string): void => {
+        if (err instanceof InvalidArgumentError) {
+            const desc = err.errorDescription ?? "";
+            if (desc.includes("code") || desc.includes("challenge")) {
+                setError("Please enter the full verification code.");
+                return;
+            }
+            if (desc.includes("password")) {
+                setError("Please enter your password.");
+                return;
+            }
+            if (desc.includes("attributes")) {
+                setError("Please fill in all required details.");
+                return;
+            }
+            setError(fallback);
+            return;
+        }
+        throw err;
+    };
+
+    const handleEmailSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
+        if (!authClient) return;
         setLoading(true);
 
+        try {
+            const result = await authClient.signUp({ username: email });
+            const state = result.state;
+
+            if (result.isFailed()) {
+                if (result.error?.isUserAlreadyExists()) {
+                    setError("An account with this email already exists.");
+                } else if (result.error?.isInvalidUsername()) {
+                    setError("Invalid email address.");
+                } else {
+                    setError(result.error?.errorData.errorDescription || "An error occurred while signing up.");
+                }
+                return;
+            }
+
+            if (state instanceof SignUpCodeRequiredState) {
+                setSignUpState(state);
+                setUiStep("emailCode");
+                return;
+            }
+
+            if (
+                state instanceof SignUpPasswordRequiredState ||
+                state instanceof SignUpAttributesRequiredState
+            ) {
+                setSignUpState(state);
+                setUiStep("details");
+                return;
+            }
+
+            setError("Unexpected sign-up state — email verification was not requested.");
+        } catch (err) {
+            handleSubmitException(err, "An error occurred while signing up.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleEmailCodeSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
+        if (!(signUpState instanceof SignUpCodeRequiredState)) {
+            setError("Sign-up session was lost. Please start again.");
+            return;
+        }
+        setLoading(true);
+
+        try {
+            const result = await signUpState.submitCode(emailCode);
+            const state = result.state;
+
+            if (result.isFailed()) {
+                if (result.error?.isTokenExpired()) {
+                    resetSignUpToStart("Your sign-up session expired. Please start again.");
+                } else if (result.error?.isInvalidCode()) {
+                    setError("The email verification code is invalid. Please re-enter.");
+                } else {
+                    setError(result.error?.errorData.errorDescription || "Failed to verify the email code.");
+                }
+                return;
+            }
+
+            if (state instanceof SignUpCompletedState) {
+                await handleAutoSignIn(state);
+                return;
+            }
+
+            setSignUpState(state);
+            setUiStep("details");
+        } catch (err) {
+            handleSubmitException(err, "Failed to verify the email code.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleDetailsSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
         if (!authClient) return;
+        setLoading(true);
 
-        const attributes: UserAccountAttributes = {
-            displayName: `${firstName} ${lastName}`,
-            givenName: firstName,
-            surname: lastName,
-            jobTitle: jobTitle,
-            city: city,
-            country: country,
-            flatusername: flatUsername,
-        };
+        try {
+            const attributes: UserAccountAttributes = {
+                displayName: `${givenName} ${familyName}`.trim(),
+                givenName,
+                surname: familyName,
+                dateOfBirth,
+            } as UserAccountAttributes;
 
-        const result = await authClient.signUp({
-            username: email,
-            attributes,
-        });
-        const state = result.state;
+            let nextState: AuthFlowStateBase | null = signUpState;
+
+            if (nextState instanceof SignUpPasswordRequiredState) {
+                const pwResult = await nextState.submitPassword(password);
+                const stateAfterPw = pwResult.state;
+
+                if (pwResult.isFailed()) {
+                    if (pwResult.error?.isTokenExpired()) {
+                        resetSignUpToStart("Your sign-up session expired. Please start again.");
+                    } else if (pwResult.error?.isInvalidPassword()) {
+                        setError("Invalid password.");
+                    } else {
+                        setError(pwResult.error?.errorData.errorDescription || "Failed to submit password.");
+                    }
+                    return;
+                }
+                nextState = stateAfterPw;
+            }
+
+            if (nextState instanceof SignUpAttributesRequiredState) {
+                const attrResult = await nextState.submitAttributes(attributes);
+                const stateAfterAttr = attrResult.state;
+
+                if (attrResult.isFailed()) {
+                    if (attrResult.error?.isTokenExpired()) {
+                        resetSignUpToStart("Your sign-up session expired. Please start again.");
+                    } else if (attrResult.error?.isAttributesValidationFailed()) {
+                        setError("One or more details are invalid.");
+                    } else if (attrResult.error?.isMissingRequiredAttributes()) {
+                        setError("Missing required details.");
+                    } else {
+                        setError(attrResult.error?.errorData.errorDescription || "Failed to submit details.");
+                    }
+                    return;
+                }
+                nextState = stateAfterAttr;
+            }
+
+            if (nextState instanceof SignUpCompletedState) {
+                await handleAutoSignIn(nextState);
+                return;
+            }
+
+            if (nextState) {
+                setSignUpState(nextState);
+            }
+        } catch (err) {
+            handleSubmitException(err, "Failed to submit details.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleAutoSignIn = async (completedState: SignUpCompletedState) => {
+        const result = await completedState.signIn();
 
         if (result.isFailed()) {
-            if (result.error?.isUserAlreadyExists()) {
-                setError("An account with this email or username already exists");
-            } else if (result.error?.isInvalidUsername()) {
-                setError("Invalid username");
-            } else if (result.error?.isInvalidPassword()) {
-                setError("Invalid password");
-            } else if (result.error?.isAttributesValidationFailed()) {
-                setError("Invalid attributes");
-            } else if (result.error?.isMissingRequiredAttributes()) {
-                setError("Missing required attributes");
-            } else {
-                setError(result.error?.errorData.errorDescription || "An error occurred while signing up");
-            }
-        } else {
-            setSignUpState(state);
+            setError(result.error?.errorData?.errorDescription || "An error occurred during auto sign-in.");
         }
 
-        setLoading(false);
-    };
-
-    const handleCodeSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setLoading(true);
-
-        if (signUpState instanceof SignUpCodeRequiredState) {
-            const result = await signUpState.submitCode(code);
-            const state = result.state;
-
-            if (result.isFailed()) {
-                if (result.error?.isInvalidCode()) {
-                    setError("Invalid verification code");
-                } else {
-                    setError(result.error?.errorData.errorDescription || "An error occurred while verifying the code");
-                }
-            } else {
-                setSignUpState(state);
-
-                if (state instanceof SignUpCompletedState) {
-                    await handleAutoSignIn(state);
-                }
-            }
-        }
-
-        setLoading(false);
-    };
-
-    const handlePasswordSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setLoading(true);
-
-        if (signUpState instanceof SignUpPasswordRequiredState) {
-            const result = await signUpState.submitPassword(password);
-            const state = result.state;
-
-            if (result.isFailed()) {
-                if (result.error?.isInvalidPassword()) {
-                    setError("Invalid password");
-                } else {
-                    setError(
-                        result.error?.errorData.errorDescription || "An error occurred while submitting the password"
-                    );
-                }
-            } else {
-                setSignUpState(state);
-
-                if (state instanceof SignUpCompletedState) {
-                    await handleAutoSignIn(state);
-                }
-            }
-        }
-
-        setLoading(false);
-    };
-
-    const handleResendCode = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setLoading(false);
-
-        if (signUpState instanceof SignUpCodeRequiredState) {
-            const result = await signUpState.resendCode();
-            const state = result.state;
-
-            if (result.isFailed()) {
-                setError(result.error?.errorData.errorDescription || "An error occurred while resending the code");
-            } else {
-                setSignUpState(state);
-                setResendCountdown(30);
-
-                const timer = setInterval(() => {
-                    setResendCountdown((prev) => {
-                        if (prev <= 1) {
-                            clearInterval(timer);
-                            return 0;
-                        }
-                        return prev - 1;
-                    });
-                }, 1000);
-            }
-        }
-    };
-
-    const handleAutoSignIn = async (signUpState: SignUpCompletedState) => {
-        setError("");
-
-        if (signUpState instanceof SignUpCompletedState) {
-            const result = await signUpState.signIn();
-            const state = result.state;
-
-            if (result.isFailed()) {
-                setError(result.error?.errorData?.errorDescription || "An error occurred during auto sign-in");
-            }
-
-            // Check for auth method registration requirement
-            if (result.isAuthMethodRegistrationRequired()) {
-                setAuthMethodsForRegistration(result.state.getAuthMethods());
-                const methods = result.state.getAuthMethods();
-                setSelectedAuthMethodForRegistration(methods.length > 0 ? methods[0] : undefined);
-                setSignUpState(result.state);
-            } else if (result.isMfaRequired()) {
-                const methods = result.state.getAuthMethods();
-                setMfaAuthMethods(methods);
-                setSelectedMfaAuthMethod(methods.length > 0 ? methods[0] : undefined);
-                setSignUpState(state);
-            } else if (result.isCompleted()) {
-                setData(result.data);
-                setSignUpState(state);
-                setSignInState(true);
-            }
-        }
-    };
-
-    const handleAuthMethodRegistrationSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setLoading(true);
-
-        if (!selectedAuthMethodForRegistration || !verificationContactForRegistration) {
-            setError("Please select an authentication method and enter a verification contact.");
-            setLoading(false);
+        if (result.isAuthMethodRegistrationRequired()) {
+            const methods = result.state.getAuthMethods();
+            const phone = pickPhoneMethod(methods);
+            setPhoneAuthMethod(phone);
+            setSignUpState(result.state);
             return;
         }
 
-        if (signUpState instanceof AuthMethodRegistrationRequiredState) {
+        if (result.isMfaRequired()) {
+            const methods = result.state.getAuthMethods();
+            setMfaAuthMethods(methods);
+            setSelectedMfaAuthMethod(methods.length > 0 ? methods[0] : undefined);
+            setSignUpState(result.state);
+            return;
+        }
+
+        if (result.isCompleted()) {
+            setData(result.data);
+            setSignUpState(result.state);
+            setSignInState(true);
+        }
+    };
+
+    const pickPhoneMethod = (methods: AuthenticationMethod[]): AuthenticationMethod | undefined => {
+        const phone = methods.find((m) => {
+            const ch = m.challenge_channel?.toLowerCase();
+            return ch === "sms" || ch === "phone";
+        });
+        return phone ?? methods[0];
+    };
+
+    const handleMobileSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
+
+        if (!(signUpState instanceof AuthMethodRegistrationRequiredState)) return;
+        if (!phoneAuthMethod) {
+            setError("No phone authentication method is available for this account.");
+            return;
+        }
+
+        setLoading(true);
+        try {
             const result = await signUpState.challengeAuthMethod({
-                authMethodType: selectedAuthMethodForRegistration,
-                verificationContact: verificationContactForRegistration,
+                authMethodType: phoneAuthMethod,
+                verificationContact: mobileNumber,
             });
 
             if (result.isFailed()) {
-                if (result.error?.isInvalidInput && result.error.isInvalidInput()) {
-                    setError("Incorrect verification contact.");
+                if (result.error?.isTokenExpired()) {
+                    resetSignUpToStart("Your sign-up session expired. Please start again.");
+                    return;
+                } else if (result.error?.isInvalidInput && result.error.isInvalidInput()) {
+                    setError("The mobile number is invalid.");
                 } else if (result.error?.isVerificationContactBlocked()) {
-                    setError(
-                        "The verification contact is blocked. Consider using a different contact or a different authentication method"
-                    );
+                    setError("This mobile number is blocked. Please use a different number.");
                 } else {
                     setError(
-                        result.error?.errorData?.errorDescription ||
-                            "An error occurred while verifying the authentication method"
+                        result.error?.errorData?.errorDescription || "An error occurred while sending the SMS code."
                     );
                 }
             }
@@ -284,32 +352,32 @@ export default function SignUpPassword() {
             if (result.isVerificationRequired && result.isVerificationRequired()) {
                 setSignUpState(result.state);
             }
+        } catch (err) {
+            handleSubmitException(err, "An error occurred while sending the SMS code.");
+        } finally {
+            setLoading(false);
         }
-
-        setLoading(false);
     };
 
-    const handleAuthMethodRegistrationChallengeSubmit = async (e: React.FormEvent) => {
+    const handleSmsCodeSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
+
+        if (!(signUpState instanceof AuthMethodVerificationRequiredState)) return;
+
         setLoading(true);
-
-        if (!challengeForRegistration) {
-            setError("Please enter a code.");
-            setLoading(false);
-            return;
-        }
-
-        if (signUpState instanceof AuthMethodVerificationRequiredState) {
-            const result = await signUpState.submitChallenge(challengeForRegistration);
+        try {
+            const result = await signUpState.submitChallenge(smsCode);
 
             if (result.isFailed()) {
-                if (result.error?.isIncorrectChallenge && result.error.isIncorrectChallenge()) {
+                if (result.error?.isTokenExpired()) {
+                    resetSignUpToStart("Your sign-up session expired. Please start again.");
+                    return;
+                } else if (result.error?.isIncorrectChallenge && result.error.isIncorrectChallenge()) {
                     setError("Incorrect code.");
                 } else {
                     setError(
-                        result.error?.errorData?.errorDescription ||
-                            "An error occurred while verifying the challenge response"
+                        result.error?.errorData?.errorDescription || "An error occurred while verifying the SMS code."
                     );
                 }
             }
@@ -319,9 +387,11 @@ export default function SignUpPassword() {
                 setSignUpState(result.state);
                 setSignInState(true);
             }
+        } catch (err) {
+            handleSubmitException(err, "An error occurred while verifying the SMS code.");
+        } finally {
+            setLoading(false);
         }
-
-        setLoading(false);
     };
 
     const handleMfaAuthMethodSubmit = async (e: React.FormEvent) => {
@@ -336,21 +406,27 @@ export default function SignUpPassword() {
         }
 
         if (signUpState instanceof MfaAwaitingState) {
-            const result = await signUpState.requestChallenge(selectedMfaAuthMethod.id);
+            try {
+                const result = await signUpState.requestChallenge(selectedMfaAuthMethod.id);
 
-            if (result.isFailed()) {
-                if (result.error?.isInvalidInput()) {
-                    setError("Incorrect verification contact.");
-                } else {
-                    setError(
-                        result.error?.errorData?.errorDescription ||
-                            "An error occurred while verifying the authentication method"
-                    );
+                if (result.isFailed()) {
+                    if (result.error?.isTokenExpired()) {
+                        resetSignUpToStart("Your sign-up session expired. Please start again.");
+                    } else if (result.error?.isInvalidInput()) {
+                        setError("Incorrect verification contact.");
+                    } else {
+                        setError(
+                            result.error?.errorData?.errorDescription ||
+                                "An error occurred while verifying the authentication method"
+                        );
+                    }
                 }
-            }
 
-            if (result.isVerificationRequired()) {
-                setSignUpState(result.state);
+                if (result.isVerificationRequired()) {
+                    setSignUpState(result.state);
+                }
+            } catch (err) {
+                handleSubmitException(err, "An error occurred while verifying the authentication method");
             }
         }
 
@@ -369,141 +445,65 @@ export default function SignUpPassword() {
         }
 
         if (signUpState instanceof MfaVerificationRequiredState) {
-            const result = await signUpState.submitChallenge(mfaChallenge);
+            try {
+                const result = await signUpState.submitChallenge(mfaChallenge);
 
-            if (result.isFailed()) {
-                if (result.error?.isIncorrectChallenge()) {
-                    setError("Incorrect code.");
-                } else {
-                    setError(
-                        result.error?.errorData?.errorDescription ||
-                            "An error occurred while verifying the challenge response"
-                    );
+                if (result.isFailed()) {
+                    if (result.error?.isTokenExpired()) {
+                        resetSignUpToStart("Your sign-up session expired. Please start again.");
+                    } else if (result.error?.isIncorrectChallenge()) {
+                        setError("Incorrect code.");
+                    } else {
+                        setError(
+                            result.error?.errorData?.errorDescription ||
+                                "An error occurred while verifying the challenge response"
+                        );
+                    }
                 }
-            }
 
-            if (result.isCompleted()) {
-                setData(result.data);
-                setSignInState(true);
-                setSignUpState(result.state);
+                if (result.isCompleted()) {
+                    setData(result.data);
+                    setSignInState(true);
+                    setSignUpState(result.state);
+                }
+            } catch (err) {
+                handleSubmitException(err, "An error occurred while verifying the challenge response");
             }
         }
 
         setLoading(false);
-    };
-
-    const startSignUpWithSocial = async (domainHint: string) => {
-        setError("");
-        setLoading(false);
-
-        if (!authClient) return;
-
-        const popUpRequest: PopupRequest = {
-            authority: customAuthConfig.auth.authority,
-            scopes: [],
-            redirectUri: customAuthConfig.auth.redirectUri || "",
-            prompt: "login",
-            domainHint: domainHint,
-        };
-
-        try {
-            await authClient.loginPopup(popUpRequest);
-
-            const accountResult = authClient.getCurrentAccount();
-
-            if (accountResult.isFailed()) {
-                setError(
-                    accountResult.error?.errorData?.errorDescription ??
-                        "An error occurred while getting the account from cache"
-                );
-            }
-
-            if (accountResult.isCompleted()) {
-                setData(accountResult.data);
-                setSignInState(true);
-            }
-        } catch (error) {
-            if (error instanceof Error) {
-                setError(error.message);
-            } else {
-                setError("An unexpected error occurred while logging in with popup");
-            }
-        }
-    };
-
-    const getPlaceholderTextForVerificationContact = (): string => {
-        if (!selectedAuthMethodForRegistration) {
-            return "Enter your contact information";
-        }
-
-        const channel = selectedAuthMethodForRegistration.challenge_channel?.toLowerCase();
-        if (channel === "email") {
-            return "Enter your email for verification";
-        } else if (channel === "sms" || channel === "phone") {
-            return "Enter your phone number for verification";
-        } else {
-            return "Enter your contact information for verification";
-        }
     };
 
     const renderForm = () => {
-        if (loadingAccountStatus) {
-            return;
-        }
+        if (loadingAccountStatus) return null;
 
         if (isSignedIn) {
             return <div style={styles.signed_in_msg}>Please sign out before processing the sign up.</div>;
         }
 
-        if (signUpState instanceof SignUpCodeRequiredState) {
+        if (signUpState instanceof AuthMethodRegistrationRequiredState) {
             return (
-                <CodeForm
-                    onSubmit={handleCodeSubmit}
-                    code={code}
-                    setCode={setCode}
+                <MobileStep
+                    onSubmit={handleMobileSubmit}
+                    mobileNumber={mobileNumber}
+                    setMobileNumber={setMobileNumber}
                     loading={loading}
-                    onResendCode={handleResendCode}
-                    resendCountdown={resendCountdown}
                 />
             );
-        } else if (signUpState instanceof SignUpPasswordRequiredState) {
+        }
+
+        if (signUpState instanceof AuthMethodVerificationRequiredState) {
             return (
-                <PasswordForm
-                    onSubmit={handlePasswordSubmit}
-                    password={password}
-                    setPassword={setPassword}
+                <SmsCodeStep
+                    onSubmit={handleSmsCodeSubmit}
+                    code={smsCode}
+                    setCode={setSmsCode}
                     loading={loading}
-                    submitButtonText="Submit Password"
-                    submitButtonLoadingText="Submitting..."
                 />
             );
-        } else if (signUpState instanceof SignUpCompletedState) {
-            return <div style={styles.signed_in_msg}>Sign up completed! Signing you in automatically...</div>;
-        } else if (signUpState instanceof AuthMethodRegistrationRequiredState) {
-            return (
-                <AuthMethodRegistrationForm
-                    onSubmit={handleAuthMethodRegistrationSubmit}
-                    authMethods={authMethodsForRegistration}
-                    selectedAuthMethod={selectedAuthMethodForRegistration}
-                    setSelectedAuthMethod={setSelectedAuthMethodForRegistration}
-                    verificationContact={verificationContactForRegistration}
-                    setVerificationContact={setVerificationContactForRegistration}
-                    loading={loading}
-                    getPlaceholderText={getPlaceholderTextForVerificationContact}
-                    styles={styles}
-                />
-            );
-        } else if (signUpState instanceof AuthMethodVerificationRequiredState) {
-            return (
-                <AuthMethodRegistrationChallengeForm
-                    onSubmit={handleAuthMethodRegistrationChallengeSubmit}
-                    challenge={challengeForRegistration}
-                    setChallenge={setChallengeForRegistration}
-                    loading={loading}
-                    styles={styles}
-                />
-            );
-        } else if (signUpState instanceof MfaAwaitingState) {
+        }
+
+        if (signUpState instanceof MfaAwaitingState) {
             return (
                 <MfaAuthMethodSelectionForm
                     onSubmit={handleMfaAuthMethodSubmit}
@@ -514,7 +514,9 @@ export default function SignUpPassword() {
                     styles={styles}
                 />
             );
-        } else if (signUpState instanceof MfaVerificationRequiredState) {
+        }
+
+        if (signUpState instanceof MfaVerificationRequiredState) {
             return (
                 <MfaChallengeForm
                     onSubmit={handleMfaChallengeSubmit}
@@ -524,35 +526,49 @@ export default function SignUpPassword() {
                     styles={styles}
                 />
             );
-        } else if (signUpState instanceof SignInCompletedState) {
+        }
+
+        if (signUpState instanceof SignInCompletedState) {
             return (
                 <div style={styles.signed_in_msg}>
-                    Sign up completed! Automatically sign in as {data?.getAccount().username}
+                    Sign up completed! Automatically signed in as {data?.getAccount().username}
                 </div>
             );
-        } else {
+        }
+
+        if (uiStep === "email") {
+            return <EmailStep onSubmit={handleEmailSubmit} email={email} setEmail={setEmail} loading={loading} />;
+        }
+
+        if (uiStep === "emailCode") {
             return (
-                <InitialForm
-                    onSubmit={handleInitialSubmit}
-                    firstName={firstName}
-                    setFirstName={setFirstName}
-                    lastName={lastName}
-                    setLastName={setLastName}
-                    jobTitle={jobTitle}
-                    setJobTitle={setJobTitle}
-                    city={city}
-                    setCity={setCity}
-                    country={country}
-                    setCountry={setCountry}
-                    email={email}
-                    setEmail={setEmail}
-                    flatUsername={flatUsername}
-                    setFlatUsername={setFlatUsername}
+                <EmailCodeStep
+                    onSubmit={handleEmailCodeSubmit}
+                    code={emailCode}
+                    setCode={setEmailCode}
                     loading={loading}
-                    onSignUpWithSocial={startSignUpWithSocial}
                 />
             );
         }
+
+        return (
+            <DetailsStep
+                onSubmit={handleDetailsSubmit}
+                password={password}
+                setPassword={setPassword}
+                confirmPassword={confirmPassword}
+                setConfirmPassword={setConfirmPassword}
+                givenName={givenName}
+                setGivenName={setGivenName}
+                familyName={familyName}
+                setFamilyName={setFamilyName}
+                dateOfBirth={dateOfBirth}
+                setDateOfBirth={setDateOfBirth}
+                termsAccepted={termsAccepted}
+                setTermsAccepted={setTermsAccepted}
+                loading={loading}
+            />
+        );
     };
 
     return (
