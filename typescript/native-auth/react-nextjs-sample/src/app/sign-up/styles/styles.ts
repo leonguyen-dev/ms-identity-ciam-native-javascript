@@ -10,7 +10,7 @@ export const styles = {
         padding: "3.75rem 0",
     },
     heroInner: {
-        maxWidth: "60rem",
+        width: "85%",
         margin: "0 auto",
         padding: "0 2rem",
     },
@@ -22,7 +22,7 @@ export const styles = {
         fontWeight: 700,
     },
     card: {
-        maxWidth: "60rem",
+        width: "85%",
         margin: "-2.5rem auto 2.5rem",
         padding: "2.5rem 3rem",
         backgroundColor: "#ffffff",
@@ -46,7 +46,7 @@ export const styles = {
         fontSize: "1.75rem",
         lineHeight: "2.25rem",
         fontWeight: 700,
-        color: "#292929",
+        color: "#000",
     },
     form: {
         display: "flex",
