@@ -212,7 +212,7 @@ export default function SignUpPage() {
                 if (result.error?.isTokenExpired()) {
                     resetSignUpToStart("Your sign-up session expired. Please start again.");
                 } else if (result.error?.isInvalidCode()) {
-                    setError("The email verification code is invalid. Please re-enter.");
+                    setError("That code is incorrect. Please try again.");
                 } else {
                     setError(result.error?.errorData.errorDescription || "Failed to verify the email code.");
                 }
@@ -585,6 +585,7 @@ export default function SignUpPage() {
                     email={email}
                     onCancel={handleCancel}
                     onResend={handleResendCode}
+                    serverError={error}
                 />
             );
         }
@@ -619,7 +620,7 @@ export default function SignUpPage() {
             <div style={styles.card}>
                 <div style={styles.cardInner}>
                     {renderForm()}
-                    {error && <div style={styles.error}>{error}</div>}
+                    {error && uiStep !== "emailCode" && <div style={styles.error}>{error}</div>}
                 </div>
             </div>
         </div>
