@@ -127,7 +127,6 @@ export const styles = {
         color: "#292929",
         backgroundColor: "#ffffff",
         outline: "none",
-        marginBottom: "0.5rem",
     },
     button: {
         padding: "0.875rem 3rem",
@@ -160,7 +159,7 @@ export const styles = {
         padding: "0.75rem",
         color: "#b91c1c",
         backgroundColor: "#fecaca",
-        marginTop: "0.625rem",
+        marginBottom: "0.75rem",
         fontSize: "0.875rem",
         fontWeight: 600,
         borderRadius: "0.25rem",
