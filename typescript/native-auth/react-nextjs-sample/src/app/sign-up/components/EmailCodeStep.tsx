@@ -5,23 +5,36 @@ import { ErrorSummary, FieldError, type FormError } from "@/app/shared/component
 
 const FIELD_ID = "signup-email-code";
 
-export function EmailCodeStep({ onSubmit, code, setCode, loading, email, onCancel, onResend }: EmailCodeStepProps) {
+export function EmailCodeStep({
+    onSubmit,
+    code,
+    setCode,
+    loading,
+    email,
+    onCancel,
+    onResend,
+    serverError,
+}: EmailCodeStepProps) {
     const [submitted, setSubmitted] = useState(false);
 
     const trimmed = code.trim();
     const isValid = trimmed.length >= 6 && /^\d+$/.test(trimmed);
-    const showError = submitted && !isValid;
-
-    const fieldErrorMessage = !trimmed
+    const clientErrorMessage = !trimmed
         ? "Please enter the verification code."
         : "Please enter a valid verification code.";
 
-    const errors: FormError[] = showError
+    const showClientError = submitted && !isValid;
+    const activeFieldMessage = showClientError ? clientErrorMessage : serverError ?? "";
+    const showFieldError = Boolean(activeFieldMessage);
+
+    const errors: FormError[] = showClientError
         ? [
-              { id: FIELD_ID, message: fieldErrorMessage },
+              { id: FIELD_ID, message: clientErrorMessage },
               { message: "One or more fields are filled out incorrectly. Please check your entries and try again." },
           ]
-        : [];
+        : serverError
+          ? [{ id: FIELD_ID, message: serverError }]
+          : [];
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -52,10 +65,10 @@ export function EmailCodeStep({ onSubmit, code, setCode, loading, email, onCance
                 onChange={(e) => setCode(e.target.value)}
                 style={styles.input}
                 autoFocus
-                aria-invalid={showError}
-                aria-describedby={showError ? `${FIELD_ID}-error` : undefined}
+                aria-invalid={showFieldError}
+                aria-describedby={showFieldError ? `${FIELD_ID}-error` : undefined}
             />
-            {showError && <FieldError id={`${FIELD_ID}-error`} message={fieldErrorMessage} />}
+            {showFieldError && <FieldError id={`${FIELD_ID}-error`} message={activeFieldMessage} />}
 
             <div style={styles.actionsRow}>
                 <button type="submit" style={loading ? styles.buttonDisabled : styles.button} disabled={loading}>
