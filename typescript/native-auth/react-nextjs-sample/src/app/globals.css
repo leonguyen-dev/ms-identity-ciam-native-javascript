@@ -1,28 +1,125 @@
+:root {
+  --font-nunito: "Nunito", sans-serif;
+  --st-primary: #267151;
+  --st-primary-light: #098851;
+  --st-primary-hover: #1e5a40;
+  --st-text: #292929;
+  --st-text-muted: #525252;
+  --st-text-faint: #6b7280;
+  --st-border: #6b7280;
+  --st-border-light: #d1d5db;
+  --st-bg: #f5f5f5;
+  --st-card-bg: #ffffff;
+  --st-error-bg: #fecaca;
+  --st-error: #b91c1c;
+  --st-success-bg: #dcfce7;
+  --st-success: #15803d;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
+html,
 body {
-  background-color: #f9fafb;
-  color: #111827;
+  font-family: var(--font-nunito), "Nunito", sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  background-color: var(--st-bg);
+  color: var(--st-text);
   min-height: 100vh;
 }
 
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-nunito), "Nunito", sans-serif;
+  font-weight: 700;
+}
+
+a {
+  color: var(--st-primary);
+  font-weight: 800;
+  text-decoration: underline;
+}
+
+input,
+button,
+select,
+textarea {
+  font-family: var(--font-nunito), "Nunito", sans-serif;
+}
+
+.st-text-button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--st-primary);
+  font-family: var(--font-nunito), "Nunito", sans-serif;
+  font-weight: 800;
+  appearance: none;
+}
+
+.st-text-button:hover,
+.st-text-button:focus {
+  background: transparent;
+  color: var(--st-primary-hover);
+  text-decoration: underline;
+  outline: none;
+}
+
+.st-text-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  text-decoration: none;
+}
+
+.st-cancel-button {
+  background: transparent;
+  border: none;
+  padding: 0.875rem 3rem;
+  cursor: pointer;
+  color: var(--st-primary);
+  font-family: var(--font-nunito), "Nunito", sans-serif;
+  font-size: 1.125rem;
+  font-weight: 800;
+  appearance: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.st-cancel-button:hover,
+.st-cancel-button:focus {
+  background-color: var(--st-primary);
+  color: #ffffff;
+  outline: none;
+}
+
+.st-cancel-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .auth-container {
-  max-width: 400px;
-  margin: 2rem auto;
+  max-width: 640px;
+  margin: 2.5rem auto;
   padding: 2rem;
-  background-color: white;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  background-color: var(--st-card-bg);
+  border-radius: 14px;
 }
 
 .auth-container h2 {
   margin-bottom: 1.5rem;
-  color: #111827;
-  font-size: 1.5rem;
-  font-weight: 600;
+  color: var(--st-text);
+  font-size: 1.875rem;
+  line-height: 2.25rem;
+  font-weight: 700;
   text-align: center;
 }
