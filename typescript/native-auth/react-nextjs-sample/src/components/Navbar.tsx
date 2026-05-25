@@ -33,7 +33,7 @@ export default function Navbar() {
                 <Link href="/">MSAL Auth</Link>
             </div>
             <div className={styles.links}>
-                <Link href="/sign-in" className={styles.link}>
+                <Link href="/" className={styles.link}>
                     Sign In
                 </Link>
                 <Link href="/sign-up" className={styles.link}>
