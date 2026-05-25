@@ -275,6 +275,11 @@ export default function SignUpPage() {
             }
 
             if (nextState instanceof SignUpAttributesRequiredState) {
+                const required = nextState.getRequiredAttributes();
+                const dobAttr = required.find((a) => a.name.endsWith("dateOfBirth"));
+                if (dobAttr) {
+                    attributes[dobAttr.name] = dateOfBirth;
+                }
                 const attrResult = await nextState.submitAttributes(attributes);
                 const stateAfterAttr = attrResult.state;
 
