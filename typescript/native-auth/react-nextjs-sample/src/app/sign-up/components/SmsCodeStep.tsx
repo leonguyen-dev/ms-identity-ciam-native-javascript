@@ -5,7 +5,7 @@ import { ErrorSummary, FieldError, type FormError } from "@/app/shared/component
 
 const FIELD_ID = "signup-sms-code";
 
-export function SmsCodeStep({ onSubmit, code, setCode, loading }: SmsCodeStepProps) {
+export function SmsCodeStep({ onSubmit, code, setCode, loading, onCancel }: SmsCodeStepProps) {
     const [submitted, setSubmitted] = useState(false);
 
     const trimmed = code.trim();
@@ -53,9 +53,14 @@ export function SmsCodeStep({ onSubmit, code, setCode, loading }: SmsCodeStepPro
             />
             {showError && <FieldError id={`${FIELD_ID}-error`} message={fieldErrorMessage} />}
 
-            <button type="submit" style={loading ? styles.buttonDisabled : styles.button} disabled={loading}>
-                {loading ? "Verifying..." : "Verify code"}
-            </button>
+            <div style={styles.actionsRow}>
+                <button type="submit" style={loading ? styles.buttonDisabled : styles.button} disabled={loading}>
+                    {loading ? "Verifying..." : "Verify code"}
+                </button>
+                <button type="button" className="st-cancel-button" onClick={onCancel}>
+                    Cancel
+                </button>
+            </div>
         </form>
     );
 }

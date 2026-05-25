@@ -48,4 +48,5 @@ export interface SmsCodeStepProps extends FormProps {
     onSubmit: (e: React.FormEvent) => Promise<void>;
     code: string;
     setCode: (value: string) => void;
+    onCancel: () => void;
 }

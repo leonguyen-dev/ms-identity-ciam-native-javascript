@@ -545,6 +545,7 @@ export default function SignUpPage() {
                     code={smsCode}
                     setCode={setSmsCode}
                     loading={loading}
+                    onCancel={handleCancel}
                 />
             );
         }
