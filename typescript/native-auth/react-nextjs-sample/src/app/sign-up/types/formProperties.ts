@@ -39,6 +39,9 @@ export interface MobileStepProps extends FormProps {
     onSubmit: (e: React.FormEvent) => Promise<void>;
     mobileNumber: string;
     setMobileNumber: (value: string) => void;
+    dialCode: string;
+    setDialCode: (value: string) => void;
+    onCancel: () => void;
 }
 
 export interface SmsCodeStepProps extends FormProps {
