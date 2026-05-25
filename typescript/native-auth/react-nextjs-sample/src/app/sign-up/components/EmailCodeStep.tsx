@@ -19,7 +19,7 @@ export function EmailCodeStep({
     const [submitted, setSubmitted] = useState(false);
 
     const trimmed = code.trim();
-    const requiredLength = expectedCodeLength && expectedCodeLength > 0 ? expectedCodeLength : 6;
+    const requiredLength = expectedCodeLength && expectedCodeLength > 0 ? expectedCodeLength : 8;
     const isValid = trimmed.length === requiredLength && /^\d+$/.test(trimmed);
     const clientErrorMessage = !trimmed
         ? "Please enter the verification code."
