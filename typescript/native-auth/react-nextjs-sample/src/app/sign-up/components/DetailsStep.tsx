@@ -21,6 +21,28 @@ const FIELD_ORDER: Array<keyof typeof FIELD_IDS> = [
     "terms",
 ];
 
+const PASSWORD_MIN_LENGTH = 8;
+const PASSWORD_MAX_LENGTH = 20;
+const STANDARD_SYMBOLS = "!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~";
+const ALLOWED_PASSWORD_CHARS = new RegExp(
+    `^[A-Za-z0-9${STANDARD_SYMBOLS.replace(/[\\\]^]/g, "\\$&")}]+$`
+);
+
+function validatePassword(password: string): string | null {
+    if (password.length === 0) return "Please provide your password";
+    if (/\s/.test(password)) return "Your password cannot contain spaces";
+    if (!ALLOWED_PASSWORD_CHARS.test(password)) return "Your password contains non-standard symbols";
+    if (password.length < PASSWORD_MIN_LENGTH || password.length > PASSWORD_MAX_LENGTH) {
+        return "Your password must be between 8 and 20 characters";
+    }
+    const categories = [/[a-z]/, /[A-Z]/, /[0-9]/, new RegExp(`[${STANDARD_SYMBOLS.replace(/[\\\]^]/g, "\\$&")}]`)];
+    const matched = categories.filter((re) => re.test(password)).length;
+    if (matched < 3) {
+        return "Your password must include at least 3 of: lowercase letters, uppercase letters, numbers, symbols";
+    }
+    return null;
+}
+
 export function DetailsStep({
     onSubmit,
     password,
@@ -43,7 +65,7 @@ export function DetailsStep({
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
     const fieldErrors: Record<string, string | null> = {
-        [FIELD_IDS.password]: password.length === 0 ? "Please provide your password" : null,
+        [FIELD_IDS.password]: validatePassword(password),
         [FIELD_IDS.confirmPassword]:
             confirmPassword.length === 0
                 ? "Please provide the password confirmation"
