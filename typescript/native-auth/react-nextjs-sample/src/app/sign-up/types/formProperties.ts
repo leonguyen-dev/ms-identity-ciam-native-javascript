@@ -49,4 +49,6 @@ export interface SmsCodeStepProps extends FormProps {
     code: string;
     setCode: (value: string) => void;
     onCancel: () => void;
+    serverError?: string;
+    expectedCodeLength?: number;
 }
