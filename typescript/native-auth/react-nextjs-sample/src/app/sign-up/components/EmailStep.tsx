@@ -6,12 +6,14 @@ import { ErrorSummary, FieldError, type FormError } from "@/app/shared/component
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const EMAIL_FIELD_ID = "signup-email";
 
-export function EmailStep({ onSubmit, email, setEmail, loading, onCancel }: EmailStepProps) {
+export function EmailStep({ onSubmit, email, setEmail, loading, onCancel, serverError }: EmailStepProps) {
     const [submitted, setSubmitted] = useState(false);
     const isValid = EMAIL_REGEX.test(email);
-    const showError = submitted && !isValid;
+    const showClientError = submitted && !isValid;
+    const showServerError = Boolean(serverError) && !showClientError;
+    const hasError = showClientError || showServerError;
 
-    const errors: FormError[] = showError
+    const errors: FormError[] = showClientError
         ? [{ id: EMAIL_FIELD_ID, message: "Please enter a valid email address." }]
         : [];
 
@@ -28,6 +30,12 @@ export function EmailStep({ onSubmit, email, setEmail, loading, onCancel }: Emai
 
             <ErrorSummary errors={errors} />
 
+            {showServerError && (
+                <div style={styles.inlineError} role="alert" id={`${EMAIL_FIELD_ID}-server-error`}>
+                    {serverError}
+                </div>
+            )}
+
             <label htmlFor={EMAIL_FIELD_ID} style={styles.label}>
                 Email address
             </label>
@@ -37,12 +45,18 @@ export function EmailStep({ onSubmit, email, setEmail, loading, onCancel }: Emai
                 placeholder="Enter your email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                style={styles.input}
+                style={hasError ? styles.inputError : styles.input}
                 autoFocus
-                aria-invalid={showError}
-                aria-describedby={showError ? `${EMAIL_FIELD_ID}-error` : undefined}
+                aria-invalid={hasError}
+                aria-describedby={
+                    showClientError
+                        ? `${EMAIL_FIELD_ID}-error`
+                        : showServerError
+                          ? `${EMAIL_FIELD_ID}-server-error`
+                          : undefined
+                }
             />
-            {showError && (
+            {showClientError && (
                 <div id={`${EMAIL_FIELD_ID}-error`}>
                     <FieldError message="Please enter a valid email address." />
                 </div>

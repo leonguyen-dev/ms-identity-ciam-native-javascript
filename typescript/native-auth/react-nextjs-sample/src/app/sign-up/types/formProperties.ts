@@ -5,6 +5,7 @@ export interface EmailStepProps extends FormProps {
     email: string;
     setEmail: (value: string) => void;
     onCancel: () => void;
+    serverError?: string;
 }
 
 export interface EmailCodeStepProps extends FormProps {
