@@ -19,8 +19,6 @@ import { useAuthClient } from "@/auth/AuthClientProvider";
 import { customAuthConfig } from "../config/auth-config";
 import { PasswordForm } from "./shared/components/PasswordForm";
 import { CodeForm } from "./shared/components/CodeForm";
-import { MfaAuthMethodSelectionForm } from "./shared/components/MfaAuthMethodSelectionForm";
-import { MfaChallengeForm } from "./shared/components/MfaChallengeForm";
 import { MobileStep } from "./sign-up/components/MobileStep";
 import { SmsCodeStep } from "./sign-up/components/SmsCodeStep";
 import { styles as signUpStyles } from "./sign-up/styles/styles";
@@ -231,6 +229,13 @@ const styles = {
         border: "0.0625rem solid #d1d5db",
         borderRadius: "0.25rem",
     },
+    sendingMsg: {
+        padding: "1.25rem",
+        color: "#292929",
+        fontSize: "1rem",
+        fontWeight: 600,
+        textAlign: "center" as const,
+    },
 } as const;
 
 function MailIcon() {
@@ -273,9 +278,15 @@ export default function Home() {
     const [smsCode, setSmsCode] = useState("");
 
     // MFA states
-    const [mfaAuthMethods, setMfaAuthMethods] = useState<AuthenticationMethod[]>([]);
     const [selectedMfaAuthMethod, setSelectedMfaAuthMethod] = useState<AuthenticationMethod | undefined>(undefined);
     const [mfaChallenge, setMfaChallenge] = useState("");
+    const [mfaAutoRequested, setMfaAutoRequested] = useState(false);
+
+    const formatMaskedMobile = (sentTo: string): string => {
+        const digits = sentTo.replace(/\D/g, "");
+        const last3 = digits.slice(-3).padStart(3, "X");
+        return `XXXX XXX ${last3}`;
+    };
 
     const pickPhoneMethod = (methods: AuthenticationMethod[]): AuthenticationMethod | undefined => {
         const phone = methods.find((m) => {
@@ -292,9 +303,9 @@ export default function Home() {
         setMobileNumber("");
         setSmsCode("");
         setPhoneAuthMethod(undefined);
-        setMfaAuthMethods([]);
         setSelectedMfaAuthMethod(undefined);
         setMfaChallenge("");
+        setMfaAutoRequested(false);
         setError("");
     };
 
@@ -307,6 +318,19 @@ export default function Home() {
         }
         setLoadingAccountStatus(false);
     }, [authClient]);
+
+    // Auto-advance: if MFA is required and we have a phone/SMS method, request the challenge
+    // automatically so the user lands directly on the code entry screen.
+    useEffect(() => {
+        if (
+            signInState instanceof MfaAwaitingState &&
+            selectedMfaAuthMethod &&
+            !mfaAutoRequested
+        ) {
+            setMfaAutoRequested(true);
+            requestMfaChallenge(signInState, selectedMfaAuthMethod.id);
+        }
+    }, [signInState, selectedMfaAuthMethod, mfaAutoRequested]);
 
     const handleRedirectFallback = async () => {
         if (!authClient) return;
@@ -377,8 +401,8 @@ export default function Home() {
 
         if (startResult.isMfaRequired()) {
             const methods = startResult.state.getAuthMethods();
-            setMfaAuthMethods(methods);
-            setSelectedMfaAuthMethod(methods.length > 0 ? methods[0] : undefined);
+            setSelectedMfaAuthMethod(pickPhoneMethod(methods));
+            setMfaAutoRequested(false);
         }
 
         if (startResult.state instanceof SignInPasswordRequiredState && password) {
@@ -408,8 +432,8 @@ export default function Home() {
 
             if (passwordResult.isMfaRequired()) {
                 const methods = passwordResult.state.getAuthMethods();
-                setMfaAuthMethods(methods);
-                setSelectedMfaAuthMethod(methods.length > 0 ? methods[0] : undefined);
+                setSelectedMfaAuthMethod(pickPhoneMethod(methods));
+                setMfaAutoRequested(false);
             }
 
             setSignInState(passwordResult.state);
@@ -452,8 +476,8 @@ export default function Home() {
 
             if (result.isMfaRequired()) {
                 const methods = result.state.getAuthMethods();
-                setMfaAuthMethods(methods);
-                setSelectedMfaAuthMethod(methods.length > 0 ? methods[0] : undefined);
+                setSelectedMfaAuthMethod(pickPhoneMethod(methods));
+                setMfaAutoRequested(false);
                 setSignInState(result.state);
             }
         }
@@ -491,8 +515,8 @@ export default function Home() {
 
             if (result.isMfaRequired()) {
                 const methods = result.state.getAuthMethods();
-                setMfaAuthMethods(methods);
-                setSelectedMfaAuthMethod(methods.length > 0 ? methods[0] : undefined);
+                setSelectedMfaAuthMethod(pickPhoneMethod(methods));
+                setMfaAutoRequested(false);
                 setSignInState(result.state);
             }
         }
@@ -631,37 +655,30 @@ export default function Home() {
         }
     };
 
-    const handleMfaAuthMethodSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setLoading(true);
+    const requestMfaChallenge = async (state: MfaAwaitingState, methodId: string) => {
+        const result = await state.requestChallenge(methodId);
+        const next = result.state;
 
-        if (!selectedMfaAuthMethod) {
-            setError("Please select an authentication method.");
-            setLoading(false);
+        if (result.isFailed()) {
+            setError(
+                result.error?.errorData?.errorDescription ||
+                    "An error occurred while sending the verification code."
+            );
             return;
         }
 
-        if (signInState instanceof MfaAwaitingState) {
-            const result = await signInState.requestChallenge(selectedMfaAuthMethod.id);
+        setSignInState(next);
+    };
 
-            if (result.isFailed()) {
-                if (result.error?.isInvalidInput()) {
-                    setError("Incorrect verification contact.");
-                } else {
-                    setError(
-                        result.error?.errorData?.errorDescription ||
-                            "An error occurred while verifying the authentication method"
-                    );
-                }
-            }
-
-            if (result.isVerificationRequired()) {
-                setSignInState(result.state);
-            }
+    const handleResendMfaChallenge = async () => {
+        if (!(signInState instanceof MfaVerificationRequiredState) || !selectedMfaAuthMethod) {
+            return;
         }
-
-        setLoading(false);
+        setError("");
+        // MfaVerificationRequiredState has no resend; ask the SDK for a fresh challenge.
+        // The current state object can't issue another challenge directly, so the user must
+        // start over if they need a new code.
+        setError("Please log in again if you need a new code.");
     };
 
     const handleMfaChallengeSubmit = async (e: React.FormEvent) => {
@@ -760,26 +777,21 @@ export default function Home() {
         }
 
         if (signInState instanceof MfaAwaitingState) {
-            return (
-                <MfaAuthMethodSelectionForm
-                    onSubmit={handleMfaAuthMethodSubmit}
-                    authMethods={mfaAuthMethods}
-                    selectedAuthMethod={selectedMfaAuthMethod}
-                    setSelectedAuthMethod={setSelectedMfaAuthMethod}
-                    loading={loading}
-                    styles={styles}
-                />
-            );
+            return <div style={styles.sendingMsg}>Sending verification code…</div>;
         }
 
         if (signInState instanceof MfaVerificationRequiredState) {
             return (
-                <MfaChallengeForm
+                <SmsCodeStep
                     onSubmit={handleMfaChallengeSubmit}
-                    challenge={mfaChallenge}
-                    setChallenge={setMfaChallenge}
+                    code={mfaChallenge}
+                    setCode={setMfaChallenge}
                     loading={loading}
-                    styles={styles}
+                    onCancel={handleCancel}
+                    onResend={handleResendMfaChallenge}
+                    mobileNumber={formatMaskedMobile(signInState.getSentTo())}
+                    serverError={error}
+                    expectedCodeLength={signInState.getCodeLength()}
                 />
             );
         }
@@ -851,7 +863,9 @@ export default function Home() {
 
     const isSmsStep =
         signInState instanceof AuthMethodRegistrationRequiredState ||
-        signInState instanceof AuthMethodVerificationRequiredState;
+        signInState instanceof AuthMethodVerificationRequiredState ||
+        signInState instanceof MfaAwaitingState ||
+        signInState instanceof MfaVerificationRequiredState;
 
     if (isSmsStep) {
         return (
@@ -864,7 +878,9 @@ export default function Home() {
                 <div style={signUpStyles.card}>
                     <div style={signUpStyles.cardInner}>
                         {renderRightColumn()}
-                        {error && !(signInState instanceof AuthMethodVerificationRequiredState) && (
+                        {error &&
+                            !(signInState instanceof AuthMethodVerificationRequiredState) &&
+                            !(signInState instanceof MfaVerificationRequiredState) && (
                             <div style={signUpStyles.pageError} role="alert">
                                 <span>{error}</span>
                             </div>
