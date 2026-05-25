@@ -546,6 +546,7 @@ export default function SignUpPage() {
                     setCode={setSmsCode}
                     loading={loading}
                     onCancel={handleCancel}
+                    serverError={error}
                 />
             );
         }
@@ -641,12 +642,14 @@ export default function SignUpPage() {
             <div style={styles.card}>
                 <div style={styles.cardInner}>
                     {renderForm()}
-                    {error && uiStep !== "emailCode" && (
-                        <div style={styles.pageError} role="alert">
-                            <WarningIcon />
-                            <span>{error}</span>
-                        </div>
-                    )}
+                    {error &&
+                        uiStep !== "emailCode" &&
+                        !(signUpState instanceof AuthMethodVerificationRequiredState) && (
+                            <div style={styles.pageError} role="alert">
+                                <WarningIcon />
+                                <span>{error}</span>
+                            </div>
+                        )}
                 </div>
             </div>
         </div>
