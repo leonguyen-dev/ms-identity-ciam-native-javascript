@@ -4,8 +4,6 @@ import { useEffect, useState } from "react";
 import {
     AuthFlowStateBase,
     CustomAuthAccountData,
-    CustomAuthPublicClientApplication,
-    ICustomAuthPublicClientApplication,
     SignInCompletedState,
     AuthMethodRegistrationRequiredState,
     AuthMethodVerificationRequiredState,
@@ -13,6 +11,7 @@ import {
     MfaAwaitingState,
     MfaVerificationRequiredState,
 } from "@azure/msal-browser/custom-auth";
+import { useAuthClient } from "@/auth/AuthClientProvider";
 import { customAuthConfig } from "../../config/auth-config";
 import { styles } from "./styles/styles";
 import { InitialForm } from "./components/InitialForm";
@@ -27,7 +26,7 @@ import { MfaAuthMethodSelectionForm } from "../shared/components/MfaAuthMethodSe
 import { MfaChallengeForm } from "../shared/components/MfaChallengeForm";
 
 export default function SignIn() {
-    const [authClient, setAuthClient] = useState<ICustomAuthPublicClientApplication | null>(null);
+    const authClient = useAuthClient();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [code, setCode] = useState("");
@@ -51,15 +50,6 @@ export default function SignIn() {
     const [mfaAuthMethods, setMfaAuthMethods] = useState<AuthenticationMethod[]>([]);
     const [selectedMfaAuthMethod, setSelectedMfaAuthMethod] = useState<AuthenticationMethod | undefined>(undefined);
     const [mfaChallenge, setMfaChallenge] = useState("");
-
-    useEffect(() => {
-        const initializeApp = async () => {
-            const appInstance = await CustomAuthPublicClientApplication.create(customAuthConfig);
-            setAuthClient(appInstance);
-        };
-
-        initializeApp();
-    }, []);
 
     useEffect(() => {
         const checkAccount = async () => {

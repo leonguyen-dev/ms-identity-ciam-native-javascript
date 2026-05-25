@@ -2,16 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CustomAuthPublicClientApplication } from "@azure/msal-browser/custom-auth";
-import { customAuthConfig } from "../config/auth-config";
+import { useAuthClient } from "@/auth/AuthClientProvider";
 import styles from "./Navbar.module.css";
 
 export default function Navbar() {
     const router = useRouter();
+    const app = useAuthClient();
 
     const handleLogout = async () => {
+        if (!app) return;
         try {
-            const app = await CustomAuthPublicClientApplication.create(customAuthConfig);
             const account = app.getCurrentAccount();
             if (account.data) {
                 await account.data.signOut();

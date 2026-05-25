@@ -1,14 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { customAuthConfig } from "../../config/auth-config";
+import { useAuthClient } from "@/auth/AuthClientProvider";
 import { styles } from "./styles/styles";
 import { InitialForm } from "./components/InitialForm";
 import { CodeForm } from "../shared/components/CodeForm";
 import { NewPasswordForm } from "./components/NewPasswordForm";
 import {
-    CustomAuthPublicClientApplication,
-    ICustomAuthPublicClientApplication,
     ResetPasswordCodeRequiredState,
     ResetPasswordPasswordRequiredState,
     ResetPasswordCompletedState,
@@ -27,7 +25,7 @@ import { MfaAuthMethodSelectionForm } from "../shared/components/MfaAuthMethodSe
 import { MfaChallengeForm } from "../shared/components/MfaChallengeForm";
 
 export default function ResetPassword() {
-    const [app, setApp] = useState<ICustomAuthPublicClientApplication | null>(null);
+    const app = useAuthClient();
     const [loadingAccountStatus, setLoadingAccountStatus] = useState(true);
     const [isSignedIn, setSignInState] = useState(false);
     const [username, setUsername] = useState("");
@@ -51,15 +49,6 @@ export default function ResetPassword() {
     const [mfaAuthMethods, setMfaAuthMethods] = useState<AuthenticationMethod[]>([]);
     const [selectedMfaAuthMethod, setSelectedMfaAuthMethod] = useState<AuthenticationMethod | undefined>(undefined);
     const [mfaChallenge, setMfaChallenge] = useState("");
-
-    useEffect(() => {
-        const initializeApp = async () => {
-            const appInstance = await CustomAuthPublicClientApplication.create(customAuthConfig);
-            setApp(appInstance);
-        };
-
-        initializeApp();
-    }, []);
 
     useEffect(() => {
         const checkAccount = async () => {

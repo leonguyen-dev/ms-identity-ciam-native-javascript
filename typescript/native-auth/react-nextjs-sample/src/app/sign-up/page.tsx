@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { customAuthConfig } from "../../config/auth-config";
+import { useAuthClient } from "@/auth/AuthClientProvider";
 import { styles } from "./styles/styles";
 import { EmailStep } from "./components/EmailStep";
 import { EmailCodeStep } from "./components/EmailCodeStep";
@@ -12,8 +12,6 @@ import { SmsCodeStep } from "./components/SmsCodeStep";
 import {
     AuthFlowStateBase,
     CustomAuthAccountData,
-    CustomAuthPublicClientApplication,
-    ICustomAuthPublicClientApplication,
     SignInCompletedState,
     SignUpAttributesRequiredState,
     SignUpCodeRequiredState,
@@ -34,7 +32,7 @@ type UiStep = "email" | "emailCode" | "details";
 
 export default function SignUpPage() {
     const router = useRouter();
-    const [authClient, setAuthClient] = useState<ICustomAuthPublicClientApplication | null>(null);
+    const authClient = useAuthClient();
 
     const [uiStep, setUiStep] = useState<UiStep>("email");
 
@@ -62,15 +60,6 @@ export default function SignUpPage() {
     const [mfaAuthMethods, setMfaAuthMethods] = useState<AuthenticationMethod[]>([]);
     const [selectedMfaAuthMethod, setSelectedMfaAuthMethod] = useState<AuthenticationMethod | undefined>(undefined);
     const [mfaChallenge, setMfaChallenge] = useState("");
-
-    useEffect(() => {
-        const initializeApp = async () => {
-            const appInstance = await CustomAuthPublicClientApplication.create(customAuthConfig);
-            setAuthClient(appInstance);
-        };
-
-        initializeApp();
-    }, []);
 
     useEffect(() => {
         const checkAccount = async () => {
