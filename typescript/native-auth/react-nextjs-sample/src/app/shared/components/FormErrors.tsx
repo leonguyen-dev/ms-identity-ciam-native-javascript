@@ -23,10 +23,10 @@ const formErrorStyles: Record<string, CSSProperties> = {
         color: "#b91c1c",
     },
     heading: {
-        fontSize: "1.0625rem",
+        fontSize: "1rem",
         fontWeight: 400,
         color: "#b91c1c",
-        marginBottom: "1rem",
+        marginBottom: "0.75rem",
     },
     list: {
         listStyle: "none",
@@ -75,7 +75,7 @@ const formErrorStyles: Record<string, CSSProperties> = {
         fontSize: "1rem",
         fontWeight: 700,
         textDecoration: "underline",
-        marginTop: "-0.75rem",
+        marginTop: "-1.5rem",
     },
     icon: {
         flexShrink: 0,

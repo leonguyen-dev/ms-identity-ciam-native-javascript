@@ -43,7 +43,6 @@ export const styles = {
         color: "#292929",
     },
     stepHeading: {
-        margin: "0 0 1rem 0",
         fontSize: "1.75rem",
         lineHeight: "2.25rem",
         fontWeight: 700,
@@ -52,7 +51,7 @@ export const styles = {
     form: {
         display: "flex",
         flexDirection: "column",
-        gap: "1.75rem",
+        gap: "2.4rem",
     },
     formFieldLabel: {
         fontSize: "0.875rem",
@@ -66,10 +65,10 @@ export const styles = {
         backgroundColor: "#ffffff",
     },
     guideTitle: {
-        fontSize: "1.125rem",
+        fontSize: "1rem",
         fontWeight: 700,
         color: "#292929",
-        marginBottom: "0.75rem",
+        marginBottom: "0.5rem",
     },
     guideList: {
         margin: 0,
@@ -123,7 +122,7 @@ export const styles = {
         padding: "1rem",
         border: "1px solid #6b7280",
         borderRadius: "0",
-        fontSize: "1.125rem",
+        fontSize: "1rem",
         fontFamily: "var(--font-nunito), 'Nunito', sans-serif",
         color: "#292929",
         backgroundColor: "#ffffff",
@@ -163,6 +162,25 @@ export const styles = {
         marginBottom: "0.75rem",
         fontSize: "0.875rem",
         fontWeight: 600,
+    },
+    inlineError: {
+        border: "1px solid #b91c1c",
+        backgroundColor: "#fecaca",
+        color: "#b91c1c",
+        padding: "1.1rem 1.5rem",
+        fontSize: "1rem",
+        fontWeight: 500,
+        fontFamily: "var(--font-nunito), 'Nunito', sans-serif",
+    },
+    inputError: {
+        padding: "1rem",
+        border: "1px solid #6b7280",
+        borderRadius: "0",
+        fontSize: "1rem",
+        fontFamily: "var(--font-nunito), 'Nunito', sans-serif",
+        color: "#292929",
+        backgroundColor: "#dbeafe",
+        outline: "none",
     },
     pageError: {
         display: "flex",
@@ -233,17 +251,16 @@ export const styles = {
         alignItems: "center",
     },
     label: {
-        fontSize: "1.0625rem",
+        fontSize: "1rem",
         fontWeight: 500,
         color: "#292929",
         textAlign: "left" as const,
-        marginBottom: "-1.25rem",
+        marginBottom: "-1.7rem",
     },
     fieldLabel: {
         fontSize: "0.8125rem",
         fontWeight: 500,
         color: "#525252",
-        marginBottom: "-0.75rem",
     },
     checkboxLabel: {
         display: "flex",
@@ -263,7 +280,7 @@ export const styles = {
         paddingRight: "5rem",
         border: "1px solid #6b7280",
         borderRadius: "0",
-        fontSize: "1.125rem",
+        fontSize: "1rem",
         fontFamily: "var(--font-nunito), 'Nunito', sans-serif",
         color: "#292929",
         backgroundColor: "#ffffff",
