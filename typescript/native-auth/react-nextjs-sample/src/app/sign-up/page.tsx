@@ -174,9 +174,9 @@ export default function SignUpPage() {
 
             if (result.isFailed()) {
                 if (result.error?.isUserAlreadyExists()) {
-                    setError("An account with this email already exists.");
+                    setError("This email address is already linked to another myServiceTas account");
                 } else if (result.error?.isInvalidUsername()) {
-                    setError("Invalid email address.");
+                    setError("Please enter a valid email address.");
                 } else {
                     setError(result.error?.errorData.errorDescription || "An error occurred while signing up.");
                 }
@@ -628,6 +628,7 @@ export default function SignUpPage() {
                     setEmail={setEmail}
                     loading={loading}
                     onCancel={handleCancel}
+                    serverError={error}
                 />
             );
         }
@@ -679,6 +680,7 @@ export default function SignUpPage() {
                 <div style={styles.cardInner}>
                     {renderForm()}
                     {error &&
+                        uiStep !== "email" &&
                         uiStep !== "emailCode" &&
                         !(signUpState instanceof AuthMethodVerificationRequiredState) && (
                             <div style={styles.pageError} role="alert">
