@@ -12,6 +12,15 @@ const FIELD_IDS = {
     terms: "signup-terms",
 } as const;
 
+const FIELD_ORDER: Array<keyof typeof FIELD_IDS> = [
+    "password",
+    "confirmPassword",
+    "givenName",
+    "familyName",
+    "dateOfBirth",
+    "terms",
+];
+
 export function DetailsStep({
     onSubmit,
     password,
@@ -27,33 +36,37 @@ export function DetailsStep({
     termsAccepted,
     setTermsAccepted,
     loading,
+    onCancel,
 }: DetailsStepProps) {
     const [submitted, setSubmitted] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
     const fieldErrors: Record<string, string | null> = {
-        [FIELD_IDS.password]: password.length === 0 ? "Please enter a password." : null,
+        [FIELD_IDS.password]: password.length === 0 ? "Please provide your password" : null,
         [FIELD_IDS.confirmPassword]:
             confirmPassword.length === 0
-                ? "Please confirm your password."
+                ? "Please provide the password confirmation"
                 : password !== confirmPassword
-                  ? "Passwords do not match."
+                  ? "Passwords do not match"
                   : null,
-        [FIELD_IDS.givenName]: givenName.trim().length === 0 ? "Please enter your given name." : null,
-        [FIELD_IDS.familyName]: familyName.trim().length === 0 ? "Please enter your family name." : null,
-        [FIELD_IDS.dateOfBirth]: dateOfBirth.length === 0 ? "Please enter your date of birth." : null,
-        [FIELD_IDS.terms]: !termsAccepted ? "You must agree to the terms and conditions." : null,
+        [FIELD_IDS.givenName]: givenName.trim().length === 0 ? "Please provide your given name(s)" : null,
+        [FIELD_IDS.familyName]: familyName.trim().length === 0 ? "Please provide family name" : null,
+        [FIELD_IDS.dateOfBirth]: dateOfBirth.length === 0 ? "Please provide your date of birth" : null,
+        [FIELD_IDS.terms]: !termsAccepted ? "You must agree to the terms and conditions" : null,
     };
 
     const canSubmit = Object.values(fieldErrors).every((e) => e === null);
 
-    const summaryErrors: FormError[] = submitted && !canSubmit
-        ? [
-              ...Object.entries(fieldErrors)
-                  .filter(([, message]) => message !== null)
-                  .map(([id, message]) => ({ id, message: message as string })),
-              { message: "One or more fields are filled out incorrectly. Please check your entries and try again." },
-          ]
-        : [];
+    const summaryErrors: FormError[] =
+        submitted && !canSubmit
+            ? FIELD_ORDER.reduce<FormError[]>((acc, key) => {
+                  const id = FIELD_IDS[key];
+                  const message = fieldErrors[id];
+                  if (message) acc.push({ id, message });
+                  return acc;
+              }, [])
+            : [];
 
     const showFieldError = (id: string): string | null =>
         submitted && fieldErrors[id] ? fieldErrors[id] : null;
@@ -67,49 +80,83 @@ export function DetailsStep({
 
     return (
         <form onSubmit={handleSubmit} style={styles.form} noValidate>
-            <h2 style={styles.stepHeading}>Enter your details</h2>
+            <h2 style={styles.stepHeading}>Enter your details (2/3)</h2>
 
             <ErrorSummary errors={summaryErrors} />
 
             <label htmlFor={FIELD_IDS.password} style={styles.label}>
                 Password
             </label>
-            <input
-                id={FIELD_IDS.password}
-                type="password"
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={styles.input}
-                aria-invalid={!!showFieldError(FIELD_IDS.password)}
-            />
+            <div style={styles.inputWrapper}>
+                <input
+                    id={FIELD_IDS.password}
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    style={styles.inputWithToggle}
+                    aria-invalid={!!showFieldError(FIELD_IDS.password)}
+                />
+                <button
+                    type="button"
+                    style={styles.showToggle}
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-pressed={showPassword}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                    {showPassword ? "Hide" : "Show"}
+                </button>
+            </div>
             {showFieldError(FIELD_IDS.password) && (
                 <FieldError message={showFieldError(FIELD_IDS.password) as string} />
             )}
 
+            <div style={styles.guideBox}>
+                <div style={styles.guideTitle}>Password guide</div>
+                <ul style={styles.guideList}>
+                    <li>Your password must be between 8 and 20 characters.</li>
+                    <li>
+                        Your password must include at least 3 of the following: lowercase letters, uppercase letters,
+                        numbers, symbols.
+                    </li>
+                    <li>Cannot contain spaces or non-standard symbols.</li>
+                </ul>
+            </div>
+
             <label htmlFor={FIELD_IDS.confirmPassword} style={styles.label}>
                 Confirm password
             </label>
-            <input
-                id={FIELD_IDS.confirmPassword}
-                type="password"
-                placeholder="Confirm password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                style={styles.input}
-                aria-invalid={!!showFieldError(FIELD_IDS.confirmPassword)}
-            />
+            <div style={styles.inputWrapper}>
+                <input
+                    id={FIELD_IDS.confirmPassword}
+                    type={showConfirmPassword ? "text" : "password"}
+                    placeholder="Re-enter your password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    style={styles.inputWithToggle}
+                    aria-invalid={!!showFieldError(FIELD_IDS.confirmPassword)}
+                />
+                <button
+                    type="button"
+                    style={styles.showToggle}
+                    onClick={() => setShowConfirmPassword((v) => !v)}
+                    aria-pressed={showConfirmPassword}
+                    aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                >
+                    {showConfirmPassword ? "Hide" : "Show"}
+                </button>
+            </div>
             {showFieldError(FIELD_IDS.confirmPassword) && (
                 <FieldError message={showFieldError(FIELD_IDS.confirmPassword) as string} />
             )}
 
             <label htmlFor={FIELD_IDS.givenName} style={styles.label}>
-                Given name
+                Given name(s)
             </label>
             <input
                 id={FIELD_IDS.givenName}
                 type="text"
-                placeholder="Given name"
+                placeholder="Enter your given name(s) as they appear on your ID"
                 value={givenName}
                 onChange={(e) => setGivenName(e.target.value)}
                 style={styles.input}
@@ -125,7 +172,7 @@ export function DetailsStep({
             <input
                 id={FIELD_IDS.familyName}
                 type="text"
-                placeholder="Family name"
+                placeholder="Enter your family name as it appears on your ID"
                 value={familyName}
                 onChange={(e) => setFamilyName(e.target.value)}
                 style={styles.input}
@@ -141,6 +188,7 @@ export function DetailsStep({
             <input
                 id={FIELD_IDS.dateOfBirth}
                 type="date"
+                placeholder="dd/mm/yyyy"
                 value={dateOfBirth}
                 onChange={(e) => setDateOfBirth(e.target.value)}
                 style={styles.input}
@@ -150,6 +198,12 @@ export function DetailsStep({
                 <FieldError message={showFieldError(FIELD_IDS.dateOfBirth) as string} />
             )}
 
+            <div style={styles.termsQuestion}>
+                Do you agree to the{" "}
+                <a href="/terms" target="_blank" rel="noopener noreferrer" style={styles.termsLink}>
+                    terms and conditions?
+                </a>
+            </div>
             <label style={styles.checkboxLabel}>
                 <input
                     id={FIELD_IDS.terms}
@@ -164,9 +218,14 @@ export function DetailsStep({
                 <FieldError message={showFieldError(FIELD_IDS.terms) as string} />
             )}
 
-            <button type="submit" style={loading ? styles.buttonDisabled : styles.button} disabled={loading}>
-                {loading ? "Working..." : "Next"}
-            </button>
+            <div style={styles.actionsRow}>
+                <button type="submit" style={loading ? styles.buttonDisabled : styles.button} disabled={loading}>
+                    {loading ? "Working..." : "Next"}
+                </button>
+                <button type="button" className="st-cancel-button" onClick={onCancel}>
+                    Cancel
+                </button>
+            </div>
         </form>
     );
 }
