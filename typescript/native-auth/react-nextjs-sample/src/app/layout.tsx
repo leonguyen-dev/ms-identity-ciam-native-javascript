@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Nunito } from "next/font/google";
 import Navbar from "@/components/Navbar";
+import { AuthClientProvider } from "@/auth/AuthClientProvider";
 import "./globals.css";
 
 const nunito = Nunito({
@@ -24,8 +25,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={nunito.variable}>
-        <Navbar />
-        {children}
+        <AuthClientProvider>
+          <Navbar />
+          {children}
+        </AuthClientProvider>
       </body>
     </html>
   );
