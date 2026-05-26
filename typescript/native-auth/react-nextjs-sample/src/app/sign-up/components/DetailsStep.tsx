@@ -2,6 +2,11 @@ import { useState } from "react";
 import { styles } from "../styles/styles";
 import type { DetailsStepProps } from "../types/formProperties";
 import { ErrorSummary, FieldError, type FormError } from "@/app/shared/components/FormErrors";
+import {
+    CONFIRM_PASSWORD_GUIDE_ERROR,
+    PASSWORD_GUIDE_ERROR,
+    isPasswordValid,
+} from "@/app/shared/utils/passwordValidation";
 
 const FIELD_IDS = {
     password: "signup-password",
@@ -12,28 +17,8 @@ const FIELD_IDS = {
     terms: "signup-terms",
 } as const;
 
-const PASSWORD_MIN_LENGTH = 8;
-const PASSWORD_MAX_LENGTH = 20;
-const STANDARD_SYMBOLS = "!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~";
-const ALLOWED_PASSWORD_CHARS = new RegExp(
-    `^[A-Za-z0-9${STANDARD_SYMBOLS.replace(/[\\\]^]/g, "\\$&")}]+$`
-);
-
-const PASSWORD_GUIDE_ERROR = "Your password does not meet the requirements of the password guide";
-const CONFIRM_PASSWORD_GUIDE_ERROR =
-    "Your password confirmation does not meet the requirements of the password guide";
 const OTHER_FIELDS_ERROR =
     "One or more fields are filled out incorrectly. Please check your entries and try again.";
-
-function isPasswordValid(password: string): boolean {
-    if (password.length === 0) return false;
-    if (/\s/.test(password)) return false;
-    if (!ALLOWED_PASSWORD_CHARS.test(password)) return false;
-    if (password.length < PASSWORD_MIN_LENGTH || password.length > PASSWORD_MAX_LENGTH) return false;
-    const categories = [/[a-z]/, /[A-Z]/, /[0-9]/, new RegExp(`[${STANDARD_SYMBOLS.replace(/[\\\]^]/g, "\\$&")}]`)];
-    const matched = categories.filter((re) => re.test(password)).length;
-    return matched >= 3;
-}
 
 export function DetailsStep({
     onSubmit,

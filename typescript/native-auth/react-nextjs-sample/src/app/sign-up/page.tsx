@@ -4,11 +4,10 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthClient } from "@/auth/AuthClientProvider";
 import { styles } from "./styles/styles";
-import { EmailStep } from "./components/EmailStep";
-import { EmailCodeStep } from "./components/EmailCodeStep";
 import { DetailsStep } from "./components/DetailsStep";
 import { MobileStep } from "./components/MobileStep";
-import { SmsCodeStep } from "./components/SmsCodeStep";
+import { EmailStep } from "../shared/components/EmailStep";
+import { VerificationCodeStep } from "../shared/components/VerificationCodeStep";
 import {
     AuthFlowStateBase,
     CustomAuthAccountData,
@@ -28,6 +27,10 @@ import {
 import { MfaAuthMethodSelectionForm } from "../shared/components/MfaAuthMethodSelectionForm";
 import { MfaChallengeForm } from "../shared/components/MfaChallengeForm";
 import { WarningIcon } from "../shared/components/FormErrors";
+import { friendlyAuthError, isContinuationTokenExpired } from "../shared/utils/friendlyAuthError";
+import { normalizeMobile, toLocalNumber } from "../shared/utils/formatMobile";
+import { pickPhoneMethod } from "../shared/utils/authMethods";
+import { describePasswordError } from "../shared/utils/passwordValidation";
 
 type UiStep = "email" | "emailCode" | "details";
 
@@ -89,7 +92,7 @@ export default function SignUpPage() {
             const result = await authClient.signUp({ username: email });
             const state = result.state;
             if (result.isFailed()) {
-                setError(result.error?.errorData.errorDescription || "Failed to resend the code.");
+                handleAuthFailure(result.error, "Failed to resend the code.");
                 return;
             }
             if (state instanceof SignUpCodeRequiredState) {
@@ -122,23 +125,15 @@ export default function SignUpPage() {
         setError(message);
     };
 
-    const describePasswordError = (subError: string | undefined): string => {
-        switch (subError) {
-            case "password_too_weak":
-                return "Your password is too weak. Use at least 3 of: lowercase, uppercase, numbers, symbols.";
-            case "password_too_short":
-                return "Your password is too short. It must be at least 8 characters.";
-            case "password_too_long":
-                return "Your password is too long. Please choose a shorter one.";
-            case "password_recently_used":
-                return "You can't reuse a recent password. Please choose a different one.";
-            case "password_banned":
-                return "That password is too common or contains a banned word. Please choose something less guessable.";
-            case "password_is_invalid":
-                return "Your password contains disallowed characters. Please choose a different one.";
-            default:
-                return "Invalid password.";
+    // Some flows (e.g. handleResendCode, handleAutoSignIn) don't currently rely on
+    // the SDK's isTokenExpired() helper, so guard them with the AADSTS code check too.
+    const handleAuthFailure = (err: unknown, fallback: string): boolean => {
+        if (isContinuationTokenExpired(err)) {
+            resetSignUpToStart(friendlyAuthError(err, "Your sign-up session expired. Please start again."));
+            return true;
         }
+        setError(friendlyAuthError(err, fallback));
+        return false;
     };
 
     const handleSubmitException = (err: unknown, fallback: string): void => {
@@ -178,7 +173,7 @@ export default function SignUpPage() {
                 } else if (result.error?.isInvalidUsername()) {
                     setError("Please enter a valid email address.");
                 } else {
-                    setError(result.error?.errorData.errorDescription || "An error occurred while signing up.");
+                    handleAuthFailure(result.error, "An error occurred while signing up.");
                 }
                 return;
             }
@@ -225,7 +220,7 @@ export default function SignUpPage() {
                 } else if (result.error?.isInvalidCode()) {
                     setError("That code is incorrect. Please try again.");
                 } else {
-                    setError(result.error?.errorData.errorDescription || "Failed to verify the email code.");
+                    setError(friendlyAuthError(result.error, "Failed to verify the email code."));
                 }
                 return;
             }
@@ -269,7 +264,7 @@ export default function SignUpPage() {
                     } else if (pwResult.error?.isInvalidPassword()) {
                         setError(describePasswordError(pwResult.error.errorData?.subError));
                     } else {
-                        setError(pwResult.error?.errorData.errorDescription || "Failed to submit password.");
+                        setError(friendlyAuthError(pwResult.error, "Failed to submit password."));
                     }
                     return;
                 }
@@ -293,7 +288,7 @@ export default function SignUpPage() {
                     } else if (attrResult.error?.isMissingRequiredAttributes()) {
                         setError("Missing required details.");
                     } else {
-                        setError(attrResult.error?.errorData.errorDescription || "Failed to submit details.");
+                        setError(friendlyAuthError(attrResult.error, "Failed to submit details."));
                     }
                     return;
                 }
@@ -319,7 +314,7 @@ export default function SignUpPage() {
         const result = await completedState.signIn();
 
         if (result.isFailed()) {
-            setError(result.error?.errorData?.errorDescription || "An error occurred during auto sign-in.");
+            handleAuthFailure(result.error, "An error occurred during auto sign-in.");
         }
 
         if (result.isAuthMethodRegistrationRequired()) {
@@ -345,14 +340,6 @@ export default function SignUpPage() {
         }
     };
 
-    const pickPhoneMethod = (methods: AuthenticationMethod[]): AuthenticationMethod | undefined => {
-        const phone = methods.find((m) => {
-            const ch = m.challenge_channel?.toLowerCase();
-            return ch === "sms" || ch === "phone";
-        });
-        return phone ?? methods[0];
-    };
-
     const handleMobileSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
@@ -363,9 +350,14 @@ export default function SignUpPage() {
             return;
         }
 
+        const normalizedMobile = normalizeMobile(mobileNumber);
+        if (normalizedMobile !== mobileNumber) {
+            setMobileNumber(normalizedMobile);
+        }
+
         setLoading(true);
         try {
-            const localNumber = mobileNumber.replace(/\D/g, "").replace(/^0+/, "");
+            const localNumber = toLocalNumber(normalizedMobile);
             const result = await signUpState.challengeAuthMethod({
                 authMethodType: phoneAuthMethod,
                 verificationContact: `${dialCode} ${localNumber}`,
@@ -380,9 +372,7 @@ export default function SignUpPage() {
                 } else if (result.error?.isVerificationContactBlocked()) {
                     setError("This mobile number is blocked. Please use a different number.");
                 } else {
-                    setError(
-                        result.error?.errorData?.errorDescription || "An error occurred while sending the SMS code."
-                    );
+                    setError(friendlyAuthError(result.error, "An error occurred while sending the SMS code."));
                 }
             }
 
@@ -411,22 +401,20 @@ export default function SignUpPage() {
         setError("");
         setLoading(true);
         try {
-            const localNumber = mobileNumber.replace(/\D/g, "").replace(/^0+/, "");
+            const localNumber = toLocalNumber(mobileNumber);
             const result = await signUpState.challengeAuthMethod({
                 authMethodType: phoneAuthMethod,
                 verificationContact: `${dialCode} ${localNumber}`,
             });
 
-            if (result.isFailed()) {
+            const failed: boolean = result.isFailed();
+            if (failed) {
                 if (result.error?.isTokenExpired()) {
                     resetSignUpToStart("Your sign-up session expired. Please start again.");
                     return;
                 }
-                setError(result.error?.errorData?.errorDescription || "Failed to resend the SMS code.");
-                return;
-            }
-
-            if (result.isVerificationRequired()) {
+                setError(friendlyAuthError(result.error, "You hit the limit on the number of text messages. Try again shortly."));
+            } else if (result.isVerificationRequired()) {
                 setSignUpState(result.state);
             }
         } catch (err) {
@@ -453,9 +441,7 @@ export default function SignUpPage() {
                 } else if (result.error?.isIncorrectChallenge && result.error.isIncorrectChallenge()) {
                     setError("Incorrect code.");
                 } else {
-                    setError(
-                        result.error?.errorData?.errorDescription || "An error occurred while verifying the SMS code."
-                    );
+                    setError(friendlyAuthError(result.error, "An error occurred while verifying the SMS code."));
                 }
             }
 
@@ -493,8 +479,7 @@ export default function SignUpPage() {
                         setError("Incorrect verification contact.");
                     } else {
                         setError(
-                            result.error?.errorData?.errorDescription ||
-                                "An error occurred while verifying the authentication method"
+                            friendlyAuthError(result.error, "An error occurred while verifying the authentication method")
                         );
                     }
                 }
@@ -532,8 +517,7 @@ export default function SignUpPage() {
                         setError("Incorrect code.");
                     } else {
                         setError(
-                            result.error?.errorData?.errorDescription ||
-                                "An error occurred while verifying the challenge response"
+                            friendlyAuthError(result.error, "An error occurred while verifying the challenge response")
                         );
                     }
                 }
@@ -568,21 +552,30 @@ export default function SignUpPage() {
                     setDialCode={setDialCode}
                     loading={loading}
                     onCancel={handleCancel}
+                    stepIndicator="3/3"
                 />
             );
         }
 
         if (signUpState instanceof AuthMethodVerificationRequiredState) {
             return (
-                <SmsCodeStep
+                <VerificationCodeStep
                     onSubmit={handleSmsCodeSubmit}
                     code={smsCode}
                     setCode={setSmsCode}
                     loading={loading}
                     onCancel={handleCancel}
                     onResend={handleResendSmsCode}
-                    mobileNumber={mobileNumber}
+                    fieldId="signup-sms-code"
+                    heading="Enter your code (3/3)"
+                    sentMessage={<>We sent a code to <strong>{mobileNumber}</strong></>}
+                    resendPrompt="Haven't got an SMS from us?"
                     serverError={error}
+                    defaultCodeLength={6}
+                    placeholder="Verification code"
+                    submitButtonText="Verify code"
+                    submitButtonLoadingText="Verifying..."
+                    emptyCodeMessage="Please enter the verification code you received."
                 />
             );
         }
@@ -629,21 +622,35 @@ export default function SignUpPage() {
                     loading={loading}
                     onCancel={handleCancel}
                     serverError={error}
+                    fieldId="signup-email"
+                    heading="Enter your email address (1/3)"
+                    guideTitle="Email address guide"
+                    guideItems={[
+                        "Enter the email address you will use to sign in to your myServiceTas account.",
+                        "We will email you a code which you will have to enter on the next screen.",
+                        "You cannot use a school email address or one you share with someone else. An email address can only be used for one account.",
+                    ]}
                 />
             );
         }
 
         if (uiStep === "emailCode") {
             return (
-                <EmailCodeStep
+                <VerificationCodeStep
                     onSubmit={handleEmailCodeSubmit}
                     code={emailCode}
                     setCode={setEmailCode}
                     loading={loading}
-                    email={email}
                     onCancel={handleCancel}
                     onResend={handleResendCode}
+                    fieldId="signup-email-code"
+                    heading="Enter the code (1/3)"
+                    sentMessage={<>We sent an email to <strong>{email}</strong></>}
+                    resendPrompt="Haven't got an email from us?"
                     serverError={error}
+                    placeholder="Enter your code"
+                    submitButtonText="Next"
+                    submitButtonLoadingText="Working..."
                 />
             );
         }
