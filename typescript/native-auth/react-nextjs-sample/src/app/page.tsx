@@ -351,6 +351,8 @@ export default function Home() {
             setMfaAutoRequested(true);
             requestMfaChallenge(signInState, selectedMfaAuthMethod.id);
         }
+        // requestMfaChallenge is recreated each render; the mfaAutoRequested guard prevents re-fire.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [signInState, selectedMfaAuthMethod, mfaAutoRequested]);
 
     const handleRedirectFallback = async () => {
@@ -633,7 +635,7 @@ export default function Home() {
             const state = result.state;
 
             if (result.isFailed()) {
-                handleAuthFailure(result.error, "Failed to resend the SMS code.");
+                handleAuthFailure(result.error, "You hit the limit on the number of text messages. Try again shortly.");
                 return;
             }
 

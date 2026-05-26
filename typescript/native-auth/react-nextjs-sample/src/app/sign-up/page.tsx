@@ -439,7 +439,7 @@ export default function SignUpPage() {
                     resetSignUpToStart("Your sign-up session expired. Please start again.");
                     return;
                 }
-                setError(friendlyAuthError(result.error, "Failed to resend the SMS code."));
+                setError(friendlyAuthError(result.error, "You hit the limit on the number of text messages. Try again shortly."));
             } else if (result.isVerificationRequired()) {
                 setSignUpState(result.state);
             }
