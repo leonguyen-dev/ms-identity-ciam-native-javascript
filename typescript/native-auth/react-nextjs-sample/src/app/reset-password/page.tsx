@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuthClient } from "@/auth/AuthClientProvider";
 import { styles } from "./styles/styles";
-import { InitialForm } from "./components/InitialForm";
-import { CodeForm } from "../shared/components/CodeForm";
+import { VerifyIdentityStep } from "./components/VerifyIdentityStep";
 import { NewPasswordForm } from "./components/NewPasswordForm";
+import { EmailStep } from "../shared/components/EmailStep";
+import { VerificationCodeStep } from "../shared/components/VerificationCodeStep";
 import {
     ResetPasswordCodeRequiredState,
     ResetPasswordPasswordRequiredState,
@@ -13,43 +15,36 @@ import {
     AuthFlowStateBase,
     CustomAuthAccountData,
     SignInCompletedState,
-    AuthMethodRegistrationRequiredState,
-    AuthMethodVerificationRequiredState,
-    AuthenticationMethod,
     MfaAwaitingState,
     MfaVerificationRequiredState,
+    InvalidArgumentError,
 } from "@azure/msal-browser/custom-auth";
-import { AuthMethodRegistrationForm } from "../shared/components/AuthMethodRegistrationForm";
-import { AuthMethodRegistrationChallengeForm } from "../shared/components/AuthMethodRegistrationChallengeForm";
-import { MfaAuthMethodSelectionForm } from "../shared/components/MfaAuthMethodSelectionForm";
-import { MfaChallengeForm } from "../shared/components/MfaChallengeForm";
+import { WarningIcon } from "../shared/components/FormErrors";
 import { friendlyAuthError, isContinuationTokenExpired } from "../shared/utils/friendlyAuthError";
+import { pickPhoneMethod } from "../shared/utils/authMethods";
+import { describePasswordError } from "../shared/utils/passwordValidation";
+
+type UiStep = "email" | "emailCode" | "verifyIdentity" | "smsCode" | "newPassword";
 
 export default function ResetPassword() {
     const app = useAuthClient();
+    const router = useRouter();
+
     const [loadingAccountStatus, setLoadingAccountStatus] = useState(true);
     const [isSignedIn, setSignInState] = useState(false);
+
+    const [uiStep, setUiStep] = useState<UiStep>("email");
     const [username, setUsername] = useState("");
-    const [code, setCode] = useState("");
+    const [emailCode, setEmailCode] = useState("");
+    const [smsCode, setSmsCode] = useState("");
     const [newPassword, setNewPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
+
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
     const [resetState, setResetState] = useState<AuthFlowStateBase | null>(null);
-    const [resendCountdown, setResendCountdown] = useState(0);
+    const [maskedMobile, setMaskedMobile] = useState<string | undefined>(undefined);
     const [data, setData] = useState<CustomAuthAccountData | undefined>(undefined);
-
-    // Auth method registration state
-    const [authMethodsForRegistration, setAuthMethodsForRegistration] = useState<AuthenticationMethod[]>([]);
-    const [selectedAuthMethodForRegistration, setSelectedAuthMethodForRegistration] = useState<
-        AuthenticationMethod | undefined
-    >(undefined);
-    const [verificationContactForRegistration, setVerificationContactForRegistration] = useState("");
-    const [challengeForRegistration, setChallengeForRegistration] = useState("");
-
-    // MFA states
-    const [mfaAuthMethods, setMfaAuthMethods] = useState<AuthenticationMethod[]>([]);
-    const [selectedMfaAuthMethod, setSelectedMfaAuthMethod] = useState<AuthenticationMethod | undefined>(undefined);
-    const [mfaChallenge, setMfaChallenge] = useState("");
 
     useEffect(() => {
         const checkAccount = async () => {
@@ -67,20 +62,18 @@ export default function ResetPassword() {
         checkAccount();
     }, [app]);
 
-    // AADSTS552001 (continuation_token expired) wipes the server-side flow state, so
-    // staying on the current step would leave the form stuck. Reset to the initial
-    // form (preserving the username so the user can resume quickly).
+    const handleCancel = () => {
+        router.push("/");
+    };
+
     const resetResetPasswordToStart = (message: string) => {
         setResetState(null);
-        setCode("");
+        setUiStep("email");
+        setEmailCode("");
+        setSmsCode("");
         setNewPassword("");
-        setAuthMethodsForRegistration([]);
-        setSelectedAuthMethodForRegistration(undefined);
-        setVerificationContactForRegistration("");
-        setChallengeForRegistration("");
-        setMfaAuthMethods([]);
-        setSelectedMfaAuthMethod(undefined);
-        setMfaChallenge("");
+        setConfirmPassword("");
+        setMaskedMobile(undefined);
         setError(message);
     };
 
@@ -93,401 +86,365 @@ export default function ResetPassword() {
         return false;
     };
 
-    const handleInitialSubmit = async (e: React.FormEvent) => {
+    const handleSubmitException = (err: unknown, fallback: string): void => {
+        if (err instanceof InvalidArgumentError) {
+            const desc = err.errorDescription ?? "";
+            if (desc.includes("code") || desc.includes("challenge")) {
+                setError("Please enter the full verification code.");
+                return;
+            }
+            if (desc.includes("password")) {
+                setError("Please enter your password.");
+                return;
+            }
+            setError(fallback);
+            return;
+        }
+        throw err;
+    };
+
+    const handleEmailSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
         if (!app) return;
 
-        e.preventDefault();
         setError("");
         setLoading(true);
 
-        const result = await app.resetPassword({
-            username,
-        });
-
-        const state = result.state;
-
-        if (result.isFailed()) {
-            if (result.error?.isInvalidUsername()) {
-                setError("Invalid email address");
-            } else if (result.error?.isUserNotFound()) {
-                setError("User not found");
-            } else {
-                handleAuthFailure(result.error, "An error occurred while initiating password reset");
-            }
-        } else {
-            setResetState(state);
-        }
-
-        setLoading(false);
-    };
-
-    const handleResendCode = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setLoading(false);
-
-        if (resetState instanceof ResetPasswordCodeRequiredState) {
-            const result = await resetState.resendCode();
+        try {
+            const result = await app.resetPassword({ username });
             const state = result.state;
 
             if (result.isFailed()) {
-                handleAuthFailure(result.error, "An error occurred while resending the code");
-            } else {
-                setResetState(state);
-                setResendCountdown(30);
-
-                const timer = setInterval(() => {
-                    setResendCountdown((prev) => {
-                        if (prev <= 1) {
-                            clearInterval(timer);
-                            return 0;
-                        }
-                        return prev - 1;
-                    });
-                }, 1000);
+                if (result.error?.isInvalidUsername()) {
+                    setError("Please enter a valid email address.");
+                } else if (result.error?.isUserNotFound()) {
+                    setError("We could not find an account with that email address.");
+                } else {
+                    handleAuthFailure(result.error, "An error occurred while initiating password reset.");
+                }
+                return;
             }
+
+            if (state instanceof ResetPasswordCodeRequiredState) {
+                setResetState(state);
+                setUiStep("emailCode");
+            }
+        } catch (err) {
+            handleSubmitException(err, "An error occurred while initiating password reset.");
+        } finally {
+            setLoading(false);
         }
     };
 
-    const handleCodeSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleResendEmailCode = async () => {
+        if (!(resetState instanceof ResetPasswordCodeRequiredState)) return;
+
         setError("");
         setLoading(true);
 
-        if (resetState instanceof ResetPasswordCodeRequiredState) {
-            const result = await resetState.submitCode(code);
+        try {
+            const result = await resetState.resendCode();
+            const state = result.state;
+            if (result.isFailed()) {
+                handleAuthFailure(result.error, "An error occurred while resending the code.");
+                return;
+            }
+            setResetState(state);
+        } catch (err) {
+            handleSubmitException(err, "An error occurred while resending the code.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleEmailCodeSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+
+        if (!(resetState instanceof ResetPasswordCodeRequiredState)) {
+            resetResetPasswordToStart("Your reset session was lost. Please start again.");
+            return;
+        }
+
+        setError("");
+        setLoading(true);
+
+        try {
+            const result = await resetState.submitCode(emailCode);
             const state = result.state;
 
             if (result.isFailed()) {
                 if (result.error?.isInvalidCode()) {
-                    setError("Invalid verification code");
+                    setError("That code is incorrect. Please try again.");
                 } else {
-                    handleAuthFailure(result.error, "An error occurred while verifying the code");
+                    handleAuthFailure(result.error, "An error occurred while verifying the code.");
                 }
-            } else {
-                setResetState(state);
+                return;
             }
-        }
 
-        setLoading(false);
+            if (state instanceof ResetPasswordPasswordRequiredState) {
+                setResetState(state);
+                setUiStep("verifyIdentity");
+            }
+        } catch (err) {
+            handleSubmitException(err, "An error occurred while verifying the code.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleVerifyIdentitySubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
+        setUiStep("smsCode");
+    };
+
+    const handleResendSmsCode = () => {
+        setError("");
+        setSmsCode("");
+    };
+
+    const handleSmsCodeSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
+        setUiStep("newPassword");
     };
 
     const handleNewPasswordSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
+
+        if (!(resetState instanceof ResetPasswordPasswordRequiredState)) {
+            resetResetPasswordToStart("Your reset session was lost. Please start again.");
+            return;
+        }
+
         setLoading(true);
 
-        if (resetState instanceof ResetPasswordPasswordRequiredState) {
-            const result = await resetState.submitNewPassword(newPassword);
-            const state = result.state;
+        try {
+            const pwResult = await resetState.submitNewPassword(newPassword);
+            const pwState = pwResult.state;
 
-            if (result.isFailed()) {
-                if (result.error?.isInvalidPassword()) {
-                    setError("Invalid password");
+            if (pwResult.isFailed()) {
+                if (pwResult.error?.isInvalidPassword()) {
+                    setError(describePasswordError(pwResult.error.errorData?.subError));
                 } else {
-                    handleAuthFailure(result.error, "An error occurred while setting new password");
+                    handleAuthFailure(pwResult.error, "An error occurred while setting your new password.");
                 }
+                return;
+            }
+
+            if (!(pwState instanceof ResetPasswordCompletedState)) {
+                setError("Unexpected state after submitting the new password.");
+                return;
+            }
+
+            await completeWithMfa(pwState);
+        } catch (err) {
+            handleSubmitException(err, "An error occurred while setting your new password.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const completeWithMfa = async (completedState: ResetPasswordCompletedState) => {
+        const signInResult = await completedState.signIn();
+        const signInState = signInResult.state;
+        const signInData = signInResult.data;
+
+        if (signInResult.isFailed()) {
+            handleAuthFailure(signInResult.error, "An error occurred during sign-in.");
+            return;
+        }
+
+        if (signInState instanceof SignInCompletedState) {
+            setData(signInData);
+            setResetState(signInState);
+            setSignInState(true);
+            return;
+        }
+
+        if (!(signInState instanceof MfaAwaitingState)) {
+            setError("Unexpected state after sign-in.");
+            return;
+        }
+
+        const methods = signInState.getAuthMethods();
+        const phone = pickPhoneMethod(methods);
+
+        if (!phone) {
+            setError("No verification method is available for this account.");
+            setResetState(signInState);
+            return;
+        }
+
+        const challengeResult = await signInState.requestChallenge(phone.id);
+        const challengeState = challengeResult.state;
+
+        if (challengeResult.isFailed()) {
+            handleAuthFailure(challengeResult.error, "An error occurred while sending the verification code.");
+            return;
+        }
+
+        if (!(challengeState instanceof MfaVerificationRequiredState)) {
+            setError("Unexpected MFA state after requesting the challenge.");
+            return;
+        }
+
+        const sentTo = challengeState.getSentTo();
+        if (sentTo) {
+            setMaskedMobile(sentTo);
+        }
+
+        const submitResult = await challengeState.submitChallenge(smsCode);
+        const submitState = submitResult.state;
+        const submitData = submitResult.data;
+
+        if (submitResult.isFailed()) {
+            if (submitResult.error?.isIncorrectChallenge()) {
+                setError("That SMS code is incorrect. Please go back and re-enter the code.");
+                setResetState(challengeState);
+                setUiStep("smsCode");
             } else {
-                setResetState(state);
-
-                if (state instanceof ResetPasswordCompletedState) {
-                    await handleAutoSignIn(state);
-                }
+                handleAuthFailure(submitResult.error, "An error occurred while verifying the SMS code.");
             }
-        }
-
-        setLoading(false);
-    };
-
-    const handleAutoSignIn = async (resetState: ResetPasswordCompletedState) => {
-        setError("");
-
-        if (resetState instanceof ResetPasswordCompletedState) {
-            const result = await resetState.signIn();
-            const state = result.state;
-
-            if (result.isFailed()) {
-                handleAuthFailure(result.error, "An error occurred during auto sign-in");
-            }
-
-            if (result.isAuthMethodRegistrationRequired()) {
-                const methods = result.state.getAuthMethods();
-                setAuthMethodsForRegistration(methods);
-                setSelectedAuthMethodForRegistration(methods.length > 0 ? methods[0] : undefined);
-                setResetState(state);
-            } else if (result.isMfaRequired()) {
-                const methods = result.state.getAuthMethods();
-                setMfaAuthMethods(methods);
-                setSelectedMfaAuthMethod(methods.length > 0 ? methods[0] : undefined);
-                setResetState(state);
-            } else if (result.isCompleted()) {
-                setData(result.data);
-                setResetState(state);
-                setSignInState(true);
-            }
-        }
-    };
-
-    const handleAuthMethodRegistrationSubmit = async (e: React.FormEvent) => {
-        if (!app) return;
-
-        e.preventDefault();
-        setError("");
-        setLoading(true);
-
-        if (!selectedAuthMethodForRegistration || !verificationContactForRegistration) {
-            setError("Please select an authentication method and enter a verification contact.");
-            setLoading(false);
             return;
         }
 
-        if (resetState instanceof AuthMethodRegistrationRequiredState) {
-            const result = await resetState.challengeAuthMethod({
-                authMethodType: selectedAuthMethodForRegistration,
-                verificationContact: verificationContactForRegistration,
-            });
-
-            if (result.isFailed()) {
-                if (result.error?.isInvalidInput()) {
-                    setError("Incorrect verification contact.");
-                } else if (result.error?.isVerificationContactBlocked()) {
-                    setError(
-                        "The verification contact is blocked. Consider using a different contact or a different authentication method"
-                    );
-                } else {
-                    handleAuthFailure(result.error, "An error occurred while verifying the authentication method");
-                }
-            }
-
-            if (result.isCompleted()) {
-                setData(result.data);
-                setResetState(result.state);
-                setSignInState(true);
-            }
-
-            if (result.isVerificationRequired()) {
-                setResetState(result.state);
-            }
-        }
-
-        setLoading(false);
-    };
-
-    const handleAuthMethodRegistrationChallengeSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setLoading(true);
-
-        if (!challengeForRegistration) {
-            setError("Please enter a code.");
-            setLoading(false);
-            return;
-        }
-
-        if (resetState instanceof AuthMethodVerificationRequiredState) {
-            const result = await resetState.submitChallenge(challengeForRegistration);
-
-            if (result.isFailed()) {
-                if (result.error?.isIncorrectChallenge()) {
-                    setError("Incorrect code.");
-                } else {
-                    handleAuthFailure(result.error, "An error occurred while verifying the challenge response");
-                }
-            }
-
-            if (result.isCompleted()) {
-                setData(result.data);
-                setResetState(result.state);
-                setSignInState(true);
-            }
-        }
-
-        setLoading(false);
-    };
-
-    const handleMfaAuthMethodSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setLoading(true);
-
-        if (!selectedMfaAuthMethod) {
-            setError("Please select an authentication method.");
-            setLoading(false);
-            return;
-        }
-
-        if (resetState instanceof MfaAwaitingState) {
-            const result = await resetState.requestChallenge(selectedMfaAuthMethod.id);
-
-            if (result.isFailed()) {
-                if (result.error?.isInvalidInput()) {
-                    setError("Incorrect verification contact.");
-                } else {
-                    handleAuthFailure(result.error, "An error occurred while verifying the authentication method");
-                }
-            }
-
-            if (result.isVerificationRequired()) {
-                setResetState(result.state);
-            }
-        }
-
-        setLoading(false);
-    };
-
-    const handleMfaChallengeSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setLoading(true);
-
-        if (!mfaChallenge) {
-            setError("Please enter a code.");
-            setLoading(false);
-            return;
-        }
-
-        if (resetState instanceof MfaVerificationRequiredState) {
-            const result = await resetState.submitChallenge(mfaChallenge);
-
-            if (result.isFailed()) {
-                if (result.error?.isIncorrectChallenge()) {
-                    setError("Incorrect code.");
-                } else {
-                    handleAuthFailure(result.error, "An error occurred while verifying the challenge response");
-                }
-            }
-
-            if (result.isCompleted()) {
-                setData(result.data);
-                setSignInState(true);
-                setResetState(result.state);
-            }
-        }
-
-        setLoading(false);
-    };
-
-    const getPlaceholderTextForVerificationContact = (): string => {
-        if (!selectedAuthMethodForRegistration) {
-            return "Enter your contact information";
-        }
-
-        const channel = selectedAuthMethodForRegistration.challenge_channel?.toLowerCase();
-        if (channel === "email") {
-            return "Enter your email for verification";
-        } else if (channel === "sms" || channel === "phone") {
-            return "Enter your phone number for verification";
-        } else {
-            return "Enter your contact information for verification";
-        }
+        setData(submitData);
+        setResetState(submitState);
+        setSignInState(true);
     };
 
     const renderForm = () => {
-        if (loadingAccountStatus) {
-            return;
-        }
+        if (loadingAccountStatus) return null;
 
         if (isSignedIn) {
             return <div style={styles.signed_in_msg}>Please sign out before processing the password reset.</div>;
         }
 
-        if (resetState instanceof ResetPasswordPasswordRequiredState) {
-            return (
-                <NewPasswordForm
-                    onSubmit={handleNewPasswordSubmit}
-                    newPassword={newPassword}
-                    setNewPassword={setNewPassword}
-                    loading={loading}
-                />
-            );
-        }
-
-        if (resetState instanceof ResetPasswordCodeRequiredState) {
-            return (
-                <CodeForm
-                    onSubmit={handleCodeSubmit}
-                    code={code}
-                    setCode={setCode}
-                    loading={loading}
-                    onResendCode={handleResendCode}
-                    resendCountdown={resendCountdown}
-                />
-            );
-        }
-
-        if (resetState instanceof AuthMethodRegistrationRequiredState) {
-            return (
-                <AuthMethodRegistrationForm
-                    onSubmit={handleAuthMethodRegistrationSubmit}
-                    authMethods={authMethodsForRegistration}
-                    selectedAuthMethod={selectedAuthMethodForRegistration}
-                    setSelectedAuthMethod={setSelectedAuthMethodForRegistration}
-                    verificationContact={verificationContactForRegistration}
-                    setVerificationContact={setVerificationContactForRegistration}
-                    loading={loading}
-                    getPlaceholderText={getPlaceholderTextForVerificationContact}
-                    styles={styles}
-                />
-            );
-        }
-
-        if (resetState instanceof AuthMethodVerificationRequiredState) {
-            return (
-                <AuthMethodRegistrationChallengeForm
-                    onSubmit={handleAuthMethodRegistrationChallengeSubmit}
-                    challenge={challengeForRegistration}
-                    setChallenge={setChallengeForRegistration}
-                    loading={loading}
-                    styles={styles}
-                />
-            );
-        }
-
-        if (resetState instanceof MfaAwaitingState) {
-            return (
-                <MfaAuthMethodSelectionForm
-                    onSubmit={handleMfaAuthMethodSubmit}
-                    authMethods={mfaAuthMethods}
-                    selectedAuthMethod={selectedMfaAuthMethod}
-                    setSelectedAuthMethod={setSelectedMfaAuthMethod}
-                    loading={loading}
-                    styles={styles}
-                />
-            );
-        }
-
-        if (resetState instanceof MfaVerificationRequiredState) {
-            return (
-                <MfaChallengeForm
-                    onSubmit={handleMfaChallengeSubmit}
-                    challenge={mfaChallenge}
-                    setChallenge={setMfaChallenge}
-                    loading={loading}
-                    styles={styles}
-                />
-            );
-        }
-
-        if (resetState instanceof ResetPasswordCompletedState) {
-            return <div style={styles.signed_in_msg}>Password reset completed! Signing you in automatically...</div>;
-        }
-
         if (resetState instanceof SignInCompletedState) {
             return (
                 <div style={styles.signed_in_msg}>
-                    Sign up completed! Automatically sign in as {data?.getAccount().username}.
+                    Password reset completed! Automatically signed in as {data?.getAccount().username}.
                 </div>
             );
         }
 
-        return <InitialForm onSubmit={handleInitialSubmit} username={username} setUsername={setUsername} loading={loading} />;
+        if (uiStep === "email") {
+            return (
+                <EmailStep
+                    onSubmit={handleEmailSubmit}
+                    email={username}
+                    setEmail={setUsername}
+                    loading={loading}
+                    onCancel={handleCancel}
+                    serverError={error}
+                    fieldId="reset-email"
+                    heading="Enter your email address (1/5)"
+                />
+            );
+        }
+
+        if (uiStep === "emailCode") {
+            return (
+                <VerificationCodeStep
+                    onSubmit={handleEmailCodeSubmit}
+                    code={emailCode}
+                    setCode={setEmailCode}
+                    loading={loading}
+                    onCancel={handleCancel}
+                    onResend={handleResendEmailCode}
+                    fieldId="reset-email-code"
+                    heading="Enter the code (2/5)"
+                    sentMessage={<>Please check your email address for a verification code.</>}
+                    resendPrompt="Haven't got an email from us?"
+                    serverError={error}
+                    placeholder="Enter your code"
+                    submitButtonText="Next"
+                    submitButtonLoadingText="Working..."
+                />
+            );
+        }
+
+        if (uiStep === "verifyIdentity") {
+            return (
+                <VerifyIdentityStep
+                    onSubmit={handleVerifyIdentitySubmit}
+                    onCancel={handleCancel}
+                    loading={loading}
+                    maskedMobile={maskedMobile}
+                />
+            );
+        }
+
+        if (uiStep === "smsCode") {
+            return (
+                <VerificationCodeStep
+                    onSubmit={handleSmsCodeSubmit}
+                    code={smsCode}
+                    setCode={setSmsCode}
+                    loading={loading}
+                    onCancel={handleCancel}
+                    onResend={handleResendSmsCode}
+                    fieldId="reset-sms-code"
+                    heading="Enter the code (4/5)"
+                    sentMessage={
+                        maskedMobile ? (
+                            <>We sent a code to <strong>{maskedMobile}</strong></>
+                        ) : (
+                            <>We sent a code to your mobile number.</>
+                        )
+                    }
+                    resendPrompt="Haven't got an SMS from us?"
+                    serverError={error}
+                    defaultCodeLength={6}
+                    placeholder="Enter your code"
+                    submitButtonText="Verify code"
+                    submitButtonLoadingText="Verifying..."
+                    emptyCodeMessage="Please enter the verification code you received."
+                />
+            );
+        }
+
+        return (
+            <NewPasswordForm
+                onSubmit={handleNewPasswordSubmit}
+                password={newPassword}
+                setPassword={setNewPassword}
+                confirmPassword={confirmPassword}
+                setConfirmPassword={setConfirmPassword}
+                loading={loading}
+                onCancel={handleCancel}
+                serverError={error}
+            />
+        );
     };
 
+    const showPageError =
+        error &&
+        uiStep !== "email" &&
+        uiStep !== "emailCode" &&
+        uiStep !== "smsCode" &&
+        uiStep !== "newPassword";
+
     return (
-        <div style={styles.container}>
-            <h2 style={styles.h2}>Reset Password</h2>
-            {renderForm()}
-            {error && <div style={styles.error}>{error}</div>}
+        <div style={styles.pageWrapper}>
+            <div style={styles.hero}>
+                <div style={styles.heroInner}>
+                    <h1 style={styles.heroTitle}>Welcome to myServiceTas</h1>
+                </div>
+            </div>
+            <div style={styles.card}>
+                <div style={styles.cardInner}>
+                    {renderForm()}
+                    {showPageError && (
+                        <div style={styles.pageError} role="alert">
+                            <WarningIcon />
+                            <span>{error}</span>
+                        </div>
+                    )}
+                </div>
+            </div>
         </div>
     );
 }
