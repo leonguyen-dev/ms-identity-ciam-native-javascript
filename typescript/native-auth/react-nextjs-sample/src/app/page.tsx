@@ -19,11 +19,12 @@ import { useAuthClient } from "@/auth/AuthClientProvider";
 import { customAuthConfig } from "../config/auth-config";
 import { PasswordForm } from "./shared/components/PasswordForm";
 import { CodeForm } from "./shared/components/CodeForm";
+import { VerificationCodeStep } from "./shared/components/VerificationCodeStep";
 import { MobileStep } from "./sign-up/components/MobileStep";
-import { SmsCodeStep } from "./sign-up/components/SmsCodeStep";
 import { styles as signUpStyles } from "./sign-up/styles/styles";
 import { friendlyAuthError, isContinuationTokenExpired } from "./shared/utils/friendlyAuthError";
 import { normalizeMobile, toLocalNumber } from "./shared/utils/formatMobile";
+import { pickPhoneMethod } from "./shared/utils/authMethods";
 
 const styles = {
     page: {
@@ -283,14 +284,6 @@ export default function Home() {
     const [selectedMfaAuthMethod, setSelectedMfaAuthMethod] = useState<AuthenticationMethod | undefined>(undefined);
     const [mfaChallenge, setMfaChallenge] = useState("");
     const [mfaAutoRequested, setMfaAutoRequested] = useState(false);
-
-    const pickPhoneMethod = (methods: AuthenticationMethod[]): AuthenticationMethod | undefined => {
-        const phone = methods.find((m) => {
-            const ch = m.challenge_channel?.toLowerCase();
-            return ch === "sms" || ch === "phone";
-        });
-        return phone ?? methods[0];
-    };
 
     const handleCancel = () => {
         setSignInState(null);
@@ -783,15 +776,23 @@ export default function Home() {
 
         if (signInState instanceof AuthMethodVerificationRequiredState) {
             return (
-                <SmsCodeStep
+                <VerificationCodeStep
                     onSubmit={handleSmsCodeSubmit}
                     code={smsCode}
                     setCode={setSmsCode}
                     loading={loading}
                     onCancel={handleCancel}
                     onResend={handleResendSmsCode}
-                    mobileNumber={`${dialCode} ${mobileNumber}`}
+                    fieldId="signin-sms-code"
+                    heading="Enter your code"
+                    sentMessage={<>We sent a code to <strong>{`${dialCode} ${mobileNumber}`}</strong></>}
+                    resendPrompt="Haven't got an SMS from us?"
                     serverError={error}
+                    defaultCodeLength={6}
+                    placeholder="Verification code"
+                    submitButtonText="Verify code"
+                    submitButtonLoadingText="Verifying..."
+                    emptyCodeMessage="Please enter the verification code you received."
                 />
             );
         }
@@ -802,16 +803,24 @@ export default function Home() {
 
         if (signInState instanceof MfaVerificationRequiredState) {
             return (
-                <SmsCodeStep
+                <VerificationCodeStep
                     onSubmit={handleMfaChallengeSubmit}
                     code={mfaChallenge}
                     setCode={setMfaChallenge}
                     loading={loading}
                     onCancel={handleCancel}
                     onResend={handleResendMfaChallenge}
-                    mobileNumber={signInState.getSentTo()}
+                    fieldId="signin-mfa-code"
+                    heading="Enter your code"
+                    sentMessage={<>We sent a code to <strong>{signInState.getSentTo()}</strong></>}
+                    resendPrompt="Haven't got an SMS from us?"
                     serverError={error}
                     expectedCodeLength={signInState.getCodeLength()}
+                    defaultCodeLength={6}
+                    placeholder="Verification code"
+                    submitButtonText="Verify code"
+                    submitButtonLoadingText="Verifying..."
+                    emptyCodeMessage="Please enter the verification code you received."
                 />
             );
         }
