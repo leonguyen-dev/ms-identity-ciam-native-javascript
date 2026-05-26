@@ -1,12 +1,37 @@
 import { useState } from "react";
-import { styles } from "../styles/styles";
-import type { EmailStepProps } from "../types/formProperties";
-import { ErrorSummary, FieldError, type FormError } from "@/app/shared/components/FormErrors";
+import type { ReactNode } from "react";
+import { ErrorSummary, FieldError, type FormError } from "./FormErrors";
+import { authFlowStyles as defaultStyles, type AuthFlowStyles } from "../styles/authFlowStyles";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const EMAIL_FIELD_ID = "signup-email";
 
-export function EmailStep({ onSubmit, email, setEmail, loading, onCancel, serverError }: EmailStepProps) {
+interface EmailStepProps {
+    onSubmit: (e: React.FormEvent) => void;
+    email: string;
+    setEmail: (value: string) => void;
+    loading: boolean;
+    onCancel: () => void;
+    fieldId: string;
+    heading: string;
+    serverError?: string;
+    guideTitle?: string;
+    guideItems?: ReactNode[];
+    styles?: AuthFlowStyles;
+}
+
+export function EmailStep({
+    onSubmit,
+    email,
+    setEmail,
+    loading,
+    onCancel,
+    fieldId,
+    heading,
+    serverError,
+    guideTitle,
+    guideItems,
+    styles = defaultStyles,
+}: EmailStepProps) {
     const [submitted, setSubmitted] = useState(false);
     const isValid = EMAIL_REGEX.test(email);
     const showClientError = submitted && !isValid;
@@ -14,7 +39,7 @@ export function EmailStep({ onSubmit, email, setEmail, loading, onCancel, server
     const hasError = showClientError || showServerError;
 
     const errors: FormError[] = showClientError
-        ? [{ id: EMAIL_FIELD_ID, message: "Please enter a valid email address." }]
+        ? [{ id: fieldId, message: "Please enter a valid email address." }]
         : [];
 
     const handleSubmit = (e: React.FormEvent) => {
@@ -26,21 +51,21 @@ export function EmailStep({ onSubmit, email, setEmail, loading, onCancel, server
 
     return (
         <form onSubmit={handleSubmit} style={styles.form} noValidate>
-            <h2 style={styles.stepHeading}>Enter your email address (1/3)</h2>
+            <h2 style={styles.stepHeading}>{heading}</h2>
 
             <ErrorSummary errors={errors} />
 
             {showServerError && (
-                <div style={styles.inlineError} role="alert" id={`${EMAIL_FIELD_ID}-server-error`}>
+                <div style={styles.inlineError} role="alert" id={`${fieldId}-server-error`}>
                     {serverError}
                 </div>
             )}
 
-            <label htmlFor={EMAIL_FIELD_ID} style={styles.label}>
+            <label htmlFor={fieldId} style={styles.label}>
                 Email address
             </label>
             <input
-                id={EMAIL_FIELD_ID}
+                id={fieldId}
                 type="email"
                 placeholder="Enter your email address"
                 value={email}
@@ -49,30 +74,25 @@ export function EmailStep({ onSubmit, email, setEmail, loading, onCancel, server
                 autoFocus
                 aria-invalid={hasError}
                 aria-describedby={
-                    showClientError
-                        ? `${EMAIL_FIELD_ID}-error`
-                        : showServerError
-                          ? `${EMAIL_FIELD_ID}-server-error`
-                          : undefined
+                    showClientError ? `${fieldId}-error` : showServerError ? `${fieldId}-server-error` : undefined
                 }
             />
             {showClientError && (
-                <div id={`${EMAIL_FIELD_ID}-error`}>
+                <div id={`${fieldId}-error`}>
                     <FieldError message="Please enter a valid email address." />
                 </div>
             )}
 
-            <div style={styles.guideBox}>
-                <div style={styles.guideTitle}>Email address guide</div>
-                <ul style={styles.guideList}>
-                    <li>Enter the email address you will use to sign in to your myServiceTas account.</li>
-                    <li>We will email you a code which you will have to enter on the next screen.</li>
-                    <li>
-                        You cannot use a school email address or one you share with someone else. An email address can
-                        only be used for one account.
-                    </li>
-                </ul>
-            </div>
+            {guideItems && guideItems.length > 0 && (
+                <div style={styles.guideBox}>
+                    {guideTitle && <div style={styles.guideTitle}>{guideTitle}</div>}
+                    <ul style={styles.guideList}>
+                        {guideItems.map((item, index) => (
+                            <li key={index}>{item}</li>
+                        ))}
+                    </ul>
+                </div>
+            )}
 
             <div style={styles.actionsRow}>
                 <button type="submit" style={loading ? styles.buttonDisabled : styles.button} disabled={loading}>
