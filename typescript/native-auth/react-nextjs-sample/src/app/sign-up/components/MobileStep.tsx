@@ -19,6 +19,7 @@ export function MobileStep({
     setDialCode,
     loading,
     onCancel,
+    stepIndicator,
 }: MobileStepProps) {
     const [submitted, setSubmitted] = useState(false);
 
@@ -44,7 +45,9 @@ export function MobileStep({
 
     return (
         <form onSubmit={handleSubmit} style={styles.form} noValidate>
-            <h2 style={styles.stepHeading}>Add your mobile number (3/3)</h2>
+            <h2 style={styles.stepHeading}>
+                Add your mobile number{stepIndicator ? ` (${stepIndicator})` : ""}
+            </h2>
 
             <ErrorSummary errors={errors} />
 

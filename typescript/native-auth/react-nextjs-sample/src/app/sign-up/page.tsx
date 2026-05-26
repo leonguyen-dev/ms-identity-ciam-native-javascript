@@ -578,6 +578,7 @@ export default function SignUpPage() {
                     setDialCode={setDialCode}
                     loading={loading}
                     onCancel={handleCancel}
+                    stepIndicator="3/3"
                 />
             );
         }
@@ -593,6 +594,7 @@ export default function SignUpPage() {
                     onResend={handleResendSmsCode}
                     mobileNumber={mobileNumber}
                     serverError={error}
+                    stepIndicator="3/3"
                 />
             );
         }

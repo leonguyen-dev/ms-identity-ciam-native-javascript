@@ -43,6 +43,7 @@ export interface MobileStepProps extends FormProps {
     dialCode: string;
     setDialCode: (value: string) => void;
     onCancel: () => void;
+    stepIndicator?: string;
 }
 
 export interface SmsCodeStepProps extends FormProps {
@@ -54,4 +55,5 @@ export interface SmsCodeStepProps extends FormProps {
     mobileNumber: string;
     serverError?: string;
     expectedCodeLength?: number;
+    stepIndicator?: string;
 }

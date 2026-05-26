@@ -15,6 +15,7 @@ export function SmsCodeStep({
     mobileNumber,
     serverError,
     expectedCodeLength,
+    stepIndicator,
 }: SmsCodeStepProps) {
     const [submitted, setSubmitted] = useState(false);
 
@@ -44,7 +45,9 @@ export function SmsCodeStep({
 
     return (
         <form onSubmit={handleSubmit} style={styles.form} noValidate>
-            <h2 style={styles.stepHeading}>Enter your code (3/3)</h2>
+            <h2 style={styles.stepHeading}>
+                Enter your code{stepIndicator ? ` (${stepIndicator})` : ""}
+            </h2>
 
             <ErrorSummary errors={errors} />
 
