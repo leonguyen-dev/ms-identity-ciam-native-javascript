@@ -433,16 +433,14 @@ export default function SignUpPage() {
                 verificationContact: `${dialCode} ${localNumber}`,
             });
 
-            if (result.isFailed()) {
+            const failed: boolean = result.isFailed();
+            if (failed) {
                 if (result.error?.isTokenExpired()) {
                     resetSignUpToStart("Your sign-up session expired. Please start again.");
                     return;
                 }
                 setError(friendlyAuthError(result.error, "Failed to resend the SMS code."));
-                return;
-            }
-
-            if (result.isVerificationRequired()) {
+            } else if (result.isVerificationRequired()) {
                 setSignUpState(result.state);
             }
         } catch (err) {
