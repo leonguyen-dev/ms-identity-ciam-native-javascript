@@ -95,7 +95,11 @@ export function WarningIcon({ size = 20 }: { size?: number }) {
             aria-hidden="true"
             style={formErrorStyles.icon}
         >
-            <path d="M10 1.5 0.75 17.5h18.5L10 1.5Zm0.875 13.25h-1.75v-1.75h1.75v1.75Zm0-3h-1.75V7.5h1.75v4.25Z" />
+            <path
+                fillRule="evenodd"
+                clipRule="evenodd"
+                d="M10 1.5c0.48 0 0.92 0.26 1.16 0.67l7.94 13.75c0.51 0.89-0.13 1.98-1.16 1.98H2.06c-1.03 0-1.67-1.09-1.16-1.98L8.84 2.17c0.24-0.41 0.68-0.67 1.16-0.67Zm0.875 13.25h-1.75v-1.75h1.75v1.75Zm0-3h-1.75V7.5h1.75v4.25Z"
+            />
         </svg>
     );
 }
