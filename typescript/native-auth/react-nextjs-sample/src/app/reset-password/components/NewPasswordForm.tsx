@@ -60,7 +60,7 @@ export function NewPasswordForm({
 
     return (
         <form onSubmit={handleSubmit} style={styles.form} noValidate>
-            <h2 style={styles.stepHeading}>Enter your new password (5/5)</h2>
+            <h2 style={styles.stepHeading}>Enter your new password (3/5)</h2>
 
             <ErrorSummary errors={summaryErrors} />
 

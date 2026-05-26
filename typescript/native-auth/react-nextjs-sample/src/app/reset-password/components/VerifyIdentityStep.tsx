@@ -9,7 +9,7 @@ export function VerifyIdentityStep({ onSubmit, onCancel, loading, maskedMobile }
 
     return (
         <form onSubmit={handleSubmit} style={styles.form} noValidate>
-            <h2 style={styles.stepHeading}>Verify your identity (3/5)</h2>
+            <h2 style={styles.stepHeading}>Verify your identity (4/5)</h2>
 
             <div style={styles.identityText}>
                 {maskedMobile ? (
