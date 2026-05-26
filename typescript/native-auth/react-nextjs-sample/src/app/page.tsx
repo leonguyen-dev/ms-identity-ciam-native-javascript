@@ -23,7 +23,7 @@ import { VerificationCodeStep } from "./shared/components/VerificationCodeStep";
 import { MobileStep } from "./sign-up/components/MobileStep";
 import { styles as signUpStyles } from "./sign-up/styles/styles";
 import { friendlyAuthError, isContinuationTokenExpired } from "./shared/utils/friendlyAuthError";
-import { normalizeMobile, toLocalNumber } from "./shared/utils/formatMobile";
+import { normalizeMobile, toLocalNumber, toMobileDisplay } from "./shared/utils/formatMobile";
 import { pickPhoneMethod } from "./shared/utils/authMethods";
 
 const styles = {
@@ -785,7 +785,7 @@ export default function Home() {
                     onResend={handleResendSmsCode}
                     fieldId="signin-sms-code"
                     heading="Enter your code"
-                    sentMessage={<>We sent a code to <strong>{`${dialCode} ${mobileNumber}`}</strong></>}
+                    sentMessage={<>We sent a code to <strong>{normalizeMobile(mobileNumber)}</strong></>}
                     resendPrompt="Haven't got an SMS from us?"
                     serverError={error}
                     defaultCodeLength={6}
@@ -812,7 +812,7 @@ export default function Home() {
                     onResend={handleResendMfaChallenge}
                     fieldId="signin-mfa-code"
                     heading="Enter your code"
-                    sentMessage={<>We sent a code to <strong>{signInState.getSentTo()}</strong></>}
+                    sentMessage={<>We sent a code to <strong>{toMobileDisplay(signInState.getSentTo())}</strong></>}
                     resendPrompt="Haven't got an SMS from us?"
                     serverError={error}
                     expectedCodeLength={signInState.getCodeLength()}
