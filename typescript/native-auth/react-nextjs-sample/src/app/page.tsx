@@ -690,10 +690,18 @@ export default function Home() {
             return;
         }
         setError("");
-        // MfaVerificationRequiredState has no resend; ask the SDK for a fresh challenge.
-        // The current state object can't issue another challenge directly, so the user must
-        // start over if they need a new code.
-        setError("Please log in again if you need a new code.");
+        setLoading(true);
+        try {
+            const result = await signInState.requestChallenge(selectedMfaAuthMethod.id);
+            const state = result.state;
+            if (result.isFailed()) {
+                handleAuthFailure(result.error, "You hit the limit on the number of text messages. Try again shortly.");
+                return;
+            }
+            setSignInState(state);
+        } finally {
+            setLoading(false);
+        }
     };
 
     const handleMfaChallengeSubmit = async (e: React.FormEvent) => {
