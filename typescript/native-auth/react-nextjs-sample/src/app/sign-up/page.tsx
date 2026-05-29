@@ -85,19 +85,18 @@ export default function SignUpPage() {
     };
 
     const handleResendCode = async () => {
-        if (!authClient || !email) return;
+        if (!(signUpState instanceof SignUpCodeRequiredState)) return;
         setError("");
         setLoading(true);
         try {
-            const result = await authClient.signUp({ username: email });
+            const result = await signUpState.resendCode();
             const state = result.state;
+
             if (result.isFailed()) {
                 handleAuthFailure(result.error, "Failed to resend the code.");
                 return;
             }
-            if (state instanceof SignUpCodeRequiredState) {
-                setSignUpState(state);
-            }
+            setSignUpState(state);
         } catch (err) {
             handleSubmitException(err, "Failed to resend the code.");
         } finally {
