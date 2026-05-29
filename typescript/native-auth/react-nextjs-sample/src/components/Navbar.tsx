@@ -30,7 +30,7 @@ export default function Navbar() {
     return (
         <nav className={styles.navbar}>
             <div className={styles.logo}>
-                <Link href="/">MSAL Auth</Link>
+                <Link href="/">Service Tasmania</Link>
             </div>
             <div className={styles.links}>
                 <Link href="/" className={styles.link}>
