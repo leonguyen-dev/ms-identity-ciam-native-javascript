@@ -1,0 +1,20 @@
+{
+  "name": "native-auth-proxy",
+  "version": "1.0.0",
+  "description": "Same-origin CORS proxy for CIAM native-auth endpoints, deployed as an Azure Static Web Apps managed function.",
+  "private": true,
+  "main": "dist/src/functions/*.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "prestart": "npm run build",
+    "start": "func start"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5"
+  }
+}
