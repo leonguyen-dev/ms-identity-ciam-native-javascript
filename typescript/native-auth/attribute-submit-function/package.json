@@ -1,0 +1,22 @@
+{
+  "name": "attribute-submit-function",
+  "version": "1.0.0",
+  "description": "Entra External ID OnAttributeCollectionSubmit custom authentication extension that validates the sign-up email (mock /Portal/checkAccess) and registers the user in TFS (mock /B2CPortal/createSignUp).",
+  "private": true,
+  "main": "dist/src/functions/*.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "prestart": "npm run build",
+    "start": "func start",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "rimraf": "^5.0.0",
+    "typescript": "^5"
+  }
+}
