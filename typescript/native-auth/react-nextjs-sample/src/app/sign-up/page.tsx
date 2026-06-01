@@ -276,6 +276,14 @@ export default function SignUpPage() {
                 if (dobAttr) {
                     attributes[dobAttr.name] = dateOfBirth;
                 }
+
+                const termsAttr = required.find((a) => a.name.endsWith("termsAndConditions"));
+                if (termsAttr) {
+                    // Boolean attribute: send a real JSON boolean, not the string "true".
+                    // UserAccountAttributes is typed Record<string, string>, so cast to assign.
+                    (attributes as Record<string, unknown>)[termsAttr.name] = termsAccepted;
+                }
+
                 const attrResult = await nextState.submitAttributes(attributes);
                 const stateAfterAttr = attrResult.state;
 
