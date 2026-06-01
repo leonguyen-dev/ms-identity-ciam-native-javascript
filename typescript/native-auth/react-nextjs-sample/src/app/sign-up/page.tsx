@@ -31,6 +31,7 @@ import { friendlyAuthError, isContinuationTokenExpired } from "../shared/utils/f
 import { normalizeMobile, toLocalNumber } from "../shared/utils/formatMobile";
 import { pickPhoneMethod } from "../shared/utils/authMethods";
 import { describePasswordError } from "../shared/utils/passwordValidation";
+import { getEmailBlockReason } from "../shared/utils/emailBlocklist";
 
 type UiStep = "email" | "emailCode" | "details";
 
@@ -159,6 +160,13 @@ export default function SignUpPage() {
     const handleEmailSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
+
+        const blockReason = getEmailBlockReason(email);
+        if (blockReason) {
+            setError(blockReason);
+            return;
+        }
+
         if (!authClient) return;
         setLoading(true);
 
