@@ -1,0 +1,36 @@
+{
+  "type": "microsoft.graph.authenticationEvent.attributeCollectionSubmit",
+  "source": "/tenants/a67366e7-9873-4a38-9bae-0a4a18952688/applications/5f0a52ca-f5db-4a6d-9b3a-3180d51fdd08",
+  "data": {
+    "@odata.type": "microsoft.graph.onAttributeCollectionSubmitCalloutData",
+    "tenantId": "a67366e7-9873-4a38-9bae-0a4a18952688",
+    "authenticationEventListenerId": "00001111-aaaa-2222-bbbb-3333cccc4444",
+    "customAuthenticationExtensionId": "11112222-bbbb-3333-cccc-4444dddd5555",
+    "authenticationContext": {
+      "correlationId": "aaaa0000-bb11-2222-33cc-444444dddddd",
+      "client": { "ip": "127.0.0.1", "locale": "en-us", "market": "en-us" },
+      "protocol": "OAUTH2.0"
+    },
+    "userSignUpInfo": {
+      "attributes": {
+        "givenName": {
+          "@odata.type": "microsoft.graph.stringDirectoryAttributeValue",
+          "value": "Larissa",
+          "attributeType": "builtIn"
+        },
+        "surname": {
+          "@odata.type": "microsoft.graph.stringDirectoryAttributeValue",
+          "value": "Price",
+          "attributeType": "builtIn"
+        }
+      },
+      "identities": [
+        {
+          "signInType": "email",
+          "issuer": "myservicetasdevpoc.onmicrosoft.com",
+          "issuerAssignedId": "someone@example.com"
+        }
+      ]
+    }
+  }
+}
