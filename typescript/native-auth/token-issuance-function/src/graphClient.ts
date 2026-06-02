@@ -72,16 +72,27 @@ interface PhoneMethodsResponse {
  * Returns the user's mobile MFA phone number (E.164, e.g. "+1 2065551234"),
  * or undefined if the user has no registered phone method.
  */
-export async function getUserMfaPhoneNumber(userId: string): Promise<string | undefined> {
+export async function getUserMfaPhoneNumber(
+    userId: string,
+    log?: (message: string) => void
+): Promise<string | undefined> {
+    // Timing breakdown helps diagnose CustomExtensionTimedOut (error 1003005):
+    // Entra allows ~2s. Slow token acquisition points at a cold start (the
+    // credential is rebuilt per cold instance); a slow Graph call points at a
+    // downstream/network issue. Warm requests should show a cached-token hit.
+    const tokenStart = Date.now();
     const token = await getCredential().getToken(GRAPH_SCOPE);
+    log?.(`Graph token acquired in ${Date.now() - tokenStart}ms.`);
     if (!token) {
         throw new Error("Failed to acquire a Microsoft Graph access token.");
     }
 
+    const callStart = Date.now();
     const response = await fetch(
         `${GRAPH_BASE}/users/${encodeURIComponent(userId)}/authentication/phoneMethods`,
         { headers: { Authorization: `Bearer ${token.token}` } }
     );
+    log?.(`Graph phoneMethods call returned ${response.status} in ${Date.now() - callStart}ms.`);
 
     if (!response.ok) {
         const body = await response.text().catch(() => "");

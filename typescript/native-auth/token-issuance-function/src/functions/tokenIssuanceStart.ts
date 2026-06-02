@@ -70,8 +70,13 @@ export async function tokenIssuanceStart(
         return { status: 400, jsonBody: { error: "Missing authenticationContext.user.id." } };
     }
 
+    // Total handler time vs. the Graph sub-timings (logged inside the client)
+    // reveals cold-start overhead: if the total is far larger than token + call,
+    // the instance was cold. Entra's budget for this call is ~2s.
+    const start = Date.now();
     try {
-        const phoneNumber = await getUserMfaPhoneNumber(userId);
+        const phoneNumber = await getUserMfaPhoneNumber(userId, (m) => context.log(m));
+        context.log(`getUserMfaPhoneNumber total: ${Date.now() - start}ms.`);
 
         if (!phoneNumber) {
             // No registered phone method — issue the token without the claim
