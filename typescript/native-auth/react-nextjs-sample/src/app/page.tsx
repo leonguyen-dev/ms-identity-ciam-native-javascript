@@ -17,6 +17,7 @@ import {
 import { PopupRequest } from "@azure/msal-browser";
 import { useAuthClient } from "@/auth/AuthClientProvider";
 import { customAuthConfig } from "../config/auth-config";
+import { WarningIcon } from "./shared/components/FormErrors";
 import { PasswordForm } from "./shared/components/PasswordForm";
 import { CodeForm } from "./shared/components/CodeForm";
 import { VerificationCodeStep } from "./shared/components/VerificationCodeStep";
@@ -227,6 +228,18 @@ const styles = {
         fontWeight: 600,
         borderRadius: "0.25rem",
     },
+    signInError: {
+        display: "flex",
+        alignItems: "center",
+        gap: "0.5rem",
+        marginTop: "0.25rem",
+        color: "#b91c1c",
+        fontSize: "1rem",
+        fontWeight: 700,
+    },
+    signInErrorText: {
+        textDecoration: "underline",
+    },
     signedInPanel: {
         padding: "1.25rem",
         border: "0.0625rem solid #d1d5db",
@@ -240,6 +253,10 @@ const styles = {
         textAlign: "center" as const,
     },
 } as const;
+
+// The Service Tasmania portal shows a single generic message for any credential
+// failure (wrong email or wrong password) so it never reveals which one was wrong.
+const SIGN_IN_FAILED_MESSAGE = "We can't seem to find your account.";
 
 function MailIcon() {
     return (
@@ -391,11 +408,11 @@ export default function Home() {
 
         if (startResult.isFailed()) {
             if (startResult.error?.isUserNotFound()) {
-                setError("User not found");
+                setError(SIGN_IN_FAILED_MESSAGE);
             } else if (startResult.error?.isInvalidUsername()) {
-                setError("Email address is invalid");
+                setError(SIGN_IN_FAILED_MESSAGE);
             } else if (startResult.error?.isPasswordIncorrect()) {
-                setError("Password is invalid");
+                setError(SIGN_IN_FAILED_MESSAGE);
             } else if (startResult.error?.isRedirectRequired()) {
                 await handleRedirectFallback();
             } else {
@@ -425,7 +442,7 @@ export default function Home() {
 
             if (passwordResult.isFailed()) {
                 if (passwordResult.error?.isInvalidPassword()) {
-                    setError("Incorrect password");
+                    setError(SIGN_IN_FAILED_MESSAGE);
                 } else {
                     handleAuthFailure(
                         passwordResult.error,
@@ -862,6 +879,13 @@ export default function Home() {
                     {loading ? "Logging in..." : "Log in"}
                 </button>
 
+                {error && (
+                    <div style={styles.signInError} role="alert">
+                        <WarningIcon />
+                        <span style={styles.signInErrorText}>{error}</span>
+                    </div>
+                )}
+
                 <Link href="/reset-password" style={styles.forgot}>
                     Forgot my password
                 </Link>
@@ -976,7 +1000,11 @@ export default function Home() {
 
                         {renderRightColumn()}
 
-                        {error && <div style={styles.error}>{error}</div>}
+                        {error &&
+                            (signInState instanceof SignInPasswordRequiredState ||
+                                signInState instanceof SignInCodeRequiredState) && (
+                                <div style={styles.error}>{error}</div>
+                            )}
                     </section>
                 </div>
             </div>
