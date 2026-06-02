@@ -26,7 +26,7 @@ import {
 } from "@azure/msal-browser/custom-auth";
 import { MfaAuthMethodSelectionForm } from "../shared/components/MfaAuthMethodSelectionForm";
 import { MfaChallengeForm } from "../shared/components/MfaChallengeForm";
-import { WarningIcon } from "../shared/components/FormErrors";
+import { WarningIcon, type FormError } from "../shared/components/FormErrors";
 import { friendlyAuthError, isContinuationTokenExpired } from "../shared/utils/friendlyAuthError";
 import { normalizeMobile, toLocalNumber } from "../shared/utils/formatMobile";
 import { pickPhoneMethod } from "../shared/utils/authMethods";
@@ -55,6 +55,7 @@ export default function SignUpPage() {
     const [smsCode, setSmsCode] = useState("");
 
     const [error, setError] = useState("");
+    const [attributeErrors, setAttributeErrors] = useState<FormError[]>([]);
     const [loading, setLoading] = useState(false);
     const [signUpState, setSignUpState] = useState<AuthFlowStateBase | null>(null);
     const [loadingAccountStatus, setLoadingAccountStatus] = useState(true);
@@ -123,6 +124,7 @@ export default function SignUpPage() {
         setSelectedMfaAuthMethod(undefined);
         setMfaChallenge("");
         setPhoneAuthMethod(undefined);
+        setAttributeErrors([]);
         setError(message);
     };
 
@@ -250,6 +252,7 @@ export default function SignUpPage() {
     const handleDetailsSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
+        setAttributeErrors([]);
         if (!authClient) return;
         setLoading(true);
 
@@ -265,7 +268,14 @@ export default function SignUpPage() {
                 termsAccepted,
             });
             if (!validation.valid) {
-                setError(validation.message ?? "One or more details are invalid.");
+                // The server validates every field and returns them all in `errors`;
+                // surface the full set together rather than just the first `message`.
+                const messages = Object.values(validation.errors ?? {});
+                setAttributeErrors(
+                    messages.length > 0
+                        ? messages.map((message) => ({ message }))
+                        : [{ message: validation.message ?? "One or more details are invalid." }]
+                );
                 return;
             }
 
@@ -689,6 +699,7 @@ export default function SignUpPage() {
         return (
             <DetailsStep
                 onSubmit={handleDetailsSubmit}
+                serverErrors={attributeErrors}
                 password={password}
                 setPassword={setPassword}
                 confirmPassword={confirmPassword}
