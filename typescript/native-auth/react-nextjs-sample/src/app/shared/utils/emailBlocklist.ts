@@ -13,7 +13,14 @@
  * Entries are matched case-insensitively. Surrounding whitespace is ignored.
  */
 
-// Exact email addresses to block, e.g. "blocked.user@example.com".
+// Generic message shown when the SERVER blocklist (OnOtpSend) rejects an address
+// that this client list didn't catch — see isOtpSendExtensionBlock in
+// friendlyAuthError. The server failure doesn't tell us whether it was the exact
+// email or the domain, so this message covers both.
+export const SERVER_BLOCKED_SIGNUP_MESSAGE =
+    "This email address, or email addresses from this domain, can't be used to sign up for myServiceTas. Please use a different email address.";
+
+// Exact email addresses to block
 const BLOCKED_EMAILS: string[] = [
     "blocked@example.com",
 ];
