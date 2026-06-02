@@ -36,6 +36,15 @@ import { validateSignUpAttributesRemote } from "../shared/utils/validateSignUpAt
 
 type UiStep = "email" | "emailCode" | "details";
 
+// Maps server-side validation field keys (api/src/attributeValidation.ts) to the
+// DetailsStep input DOM ids, so each server error can render inline beneath its field.
+const SERVER_FIELD_TO_INPUT_ID: Record<string, string> = {
+    givenName: "signup-given-name",
+    surname: "signup-family-name",
+    dateOfBirth: "signup-dob",
+    termsAccepted: "signup-terms",
+};
+
 export default function SignUpPage() {
     const router = useRouter();
     const authClient = useAuthClient();
@@ -268,12 +277,15 @@ export default function SignUpPage() {
                 termsAccepted,
             });
             if (!validation.valid) {
-                // The server validates every field and returns them all in `errors`;
-                // surface the full set together rather than just the first `message`.
-                const messages = Object.values(validation.errors ?? {});
+                // The server validates every field and returns them all in `errors`,
+                // keyed by attribute name. Attach each field's input id so the message
+                // renders both in the summary and inline beneath its field. Errors with
+                // no field key (e.g. the proxy-unreachable fallback) show in the summary.
+                const fieldErrors = validation.errors ?? {};
+                const keys = Object.keys(fieldErrors);
                 setAttributeErrors(
-                    messages.length > 0
-                        ? messages.map((message) => ({ message }))
+                    keys.length > 0
+                        ? keys.map((key) => ({ id: SERVER_FIELD_TO_INPUT_ID[key], message: fieldErrors[key] }))
                         : [{ message: validation.message ?? "One or more details are invalid." }]
                 );
                 return;

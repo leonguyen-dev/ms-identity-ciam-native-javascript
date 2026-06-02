@@ -94,6 +94,17 @@ export function DetailsStep({
     const showFieldError = (id: string): string | null =>
         submitted && fieldErrors[id] ? fieldErrors[id] : null;
 
+    // Server errors arrive keyed by the matching input id; index them so each renders
+    // inline beneath its field, just like the client-side checks. Prefer the client
+    // message when present (wording is aligned, so the two won't both show for a field).
+    const serverFieldErrorById: Record<string, string> = {};
+    for (const err of serverErrors ?? []) {
+        if (err.id) serverFieldErrorById[err.id] = err.message;
+    }
+
+    const fieldErrorFor = (id: string): string | null =>
+        showFieldError(id) ?? serverFieldErrorById[id] ?? null;
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         setSubmitted(true);
@@ -183,10 +194,10 @@ export function DetailsStep({
                 value={givenName}
                 onChange={(e) => setGivenName(e.target.value)}
                 style={styles.input}
-                aria-invalid={!!showFieldError(FIELD_IDS.givenName)}
+                aria-invalid={!!fieldErrorFor(FIELD_IDS.givenName)}
             />
-            {showFieldError(FIELD_IDS.givenName) && (
-                <FieldError message={showFieldError(FIELD_IDS.givenName) as string} />
+            {fieldErrorFor(FIELD_IDS.givenName) && (
+                <FieldError message={fieldErrorFor(FIELD_IDS.givenName) as string} />
             )}
 
             <label htmlFor={FIELD_IDS.familyName} style={styles.label}>
@@ -199,10 +210,10 @@ export function DetailsStep({
                 value={familyName}
                 onChange={(e) => setFamilyName(e.target.value)}
                 style={styles.input}
-                aria-invalid={!!showFieldError(FIELD_IDS.familyName)}
+                aria-invalid={!!fieldErrorFor(FIELD_IDS.familyName)}
             />
-            {showFieldError(FIELD_IDS.familyName) && (
-                <FieldError message={showFieldError(FIELD_IDS.familyName) as string} />
+            {fieldErrorFor(FIELD_IDS.familyName) && (
+                <FieldError message={fieldErrorFor(FIELD_IDS.familyName) as string} />
             )}
 
             <label htmlFor={FIELD_IDS.dateOfBirth} style={styles.label}>
@@ -215,10 +226,10 @@ export function DetailsStep({
                 value={dateOfBirth}
                 onChange={(e) => setDateOfBirth(e.target.value)}
                 style={styles.input}
-                aria-invalid={!!showFieldError(FIELD_IDS.dateOfBirth)}
+                aria-invalid={!!fieldErrorFor(FIELD_IDS.dateOfBirth)}
             />
-            {showFieldError(FIELD_IDS.dateOfBirth) && (
-                <FieldError message={showFieldError(FIELD_IDS.dateOfBirth) as string} />
+            {fieldErrorFor(FIELD_IDS.dateOfBirth) && (
+                <FieldError message={fieldErrorFor(FIELD_IDS.dateOfBirth) as string} />
             )}
 
             <div style={styles.termsQuestion}>
@@ -233,12 +244,12 @@ export function DetailsStep({
                     type="checkbox"
                     checked={termsAccepted}
                     onChange={(e) => setTermsAccepted(e.target.checked)}
-                    aria-invalid={!!showFieldError(FIELD_IDS.terms)}
+                    aria-invalid={!!fieldErrorFor(FIELD_IDS.terms)}
                 />
                 <span>I agree to the terms and conditions</span>
             </label>
-            {showFieldError(FIELD_IDS.terms) && (
-                <FieldError message={showFieldError(FIELD_IDS.terms) as string} />
+            {fieldErrorFor(FIELD_IDS.terms) && (
+                <FieldError message={fieldErrorFor(FIELD_IDS.terms) as string} />
             )}
 
             <div style={styles.actionsRow}>
