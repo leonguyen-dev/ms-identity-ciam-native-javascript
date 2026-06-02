@@ -1,0 +1,22 @@
+{
+  "name": "attribute-start-function",
+  "version": "1.0.0",
+  "description": "Entra External ID OnAttributeCollectionStart custom authentication extension that blocks sign-up for emails/domains on a configurable blocklist (BLOCKED_EMAILS / BLOCKED_DOMAINS).",
+  "private": true,
+  "main": "dist/src/functions/*.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "prestart": "npm run build",
+    "start": "func start",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "rimraf": "^5.0.0",
+    "typescript": "^5"
+  }
+}
