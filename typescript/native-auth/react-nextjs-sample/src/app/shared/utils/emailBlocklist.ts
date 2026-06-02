@@ -5,20 +5,22 @@
  * submit their email, before we call signUp() (so no verification code is ever
  * sent to a blocked address). It is NOT a security boundary — the native-auth
  * API can be called directly, bypassing this check. The authoritative block is
- * enforced server-side by the OnAttributeCollectionStart custom authentication
- * extension. Keep the two lists in sync.
+ * enforced server-side by the OnOtpSend custom authentication extension
+ * (otp-email-function), which native auth fires before any code is sent;
+ * OnAttributeCollectionStart is a secondary guard for the browser-delegated flow
+ * only (native auth never fires it). Keep all three lists in sync.
  *
  * Entries are matched case-insensitively. Surrounding whitespace is ignored.
  */
 
 // Exact email addresses to block, e.g. "blocked.user@example.com".
 const BLOCKED_EMAILS: string[] = [
-    "someone@example.com",
+    "blocked@example.com",
 ];
 
 // Domains to block. Matches the domain itself and any subdomain
 const BLOCKED_DOMAINS: string[] = [
-    "a.c",
+    "mailinator.com",
 ];
 
 const BLOCKED_EMAIL_SET = new Set(BLOCKED_EMAILS.map((e) => e.trim().toLowerCase()));
