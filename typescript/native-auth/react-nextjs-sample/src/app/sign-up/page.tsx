@@ -32,6 +32,7 @@ import { normalizeMobile, toLocalNumber } from "../shared/utils/formatMobile";
 import { pickPhoneMethod } from "../shared/utils/authMethods";
 import { describePasswordError } from "../shared/utils/passwordValidation";
 import { getEmailBlockReason } from "../shared/utils/emailBlocklist";
+import { validateSignUpAttributesRemote } from "../shared/utils/validateSignUpAttributes";
 
 type UiStep = "email" | "emailCode" | "details";
 
@@ -253,6 +254,21 @@ export default function SignUpPage() {
         setLoading(true);
 
         try {
+            // Server-side validation gate (Option A). Native auth has no
+            // OnAttributeCollectionSubmit hook, so we run the authoritative business-rule
+            // check here before mutating any server-side flow state. The DetailsStep
+            // component already did the same checks client-side for fast feedback.
+            const validation = await validateSignUpAttributesRemote({
+                givenName,
+                surname: familyName,
+                dateOfBirth,
+                termsAccepted,
+            });
+            if (!validation.valid) {
+                setError(validation.message ?? "One or more details are invalid.");
+                return;
+            }
+
             const attributes: UserAccountAttributes = {
                 displayName: `${givenName} ${familyName}`.trim(),
                 givenName,
