@@ -26,18 +26,12 @@ import {
 } from "@azure/msal-browser/custom-auth";
 import { MfaAuthMethodSelectionForm } from "../shared/components/MfaAuthMethodSelectionForm";
 import { MfaChallengeForm } from "../shared/components/MfaChallengeForm";
-import { WarningIcon } from "../shared/components/FormErrors";
+import { WarningIcon, type FormError } from "../shared/components/FormErrors";
 import { friendlyAuthError, isContinuationTokenExpired, isOtpSendExtensionBlock } from "../shared/utils/friendlyAuthError";
 import { normalizeMobile, toLocalNumber } from "../shared/utils/formatMobile";
 import { pickPhoneMethod } from "../shared/utils/authMethods";
 import { describePasswordError } from "../shared/utils/passwordValidation";
 import { getEmailBlockReason, SERVER_BLOCKED_SIGNUP_MESSAGE } from "../shared/utils/emailBlocklist";
-import { WarningIcon, type FormError } from "../shared/components/FormErrors";
-import { friendlyAuthError, isContinuationTokenExpired } from "../shared/utils/friendlyAuthError";
-import { normalizeMobile, toLocalNumber } from "../shared/utils/formatMobile";
-import { pickPhoneMethod } from "../shared/utils/authMethods";
-import { describePasswordError } from "../shared/utils/passwordValidation";
-import { getEmailBlockReason } from "../shared/utils/emailBlocklist";
 import { validateSignUpAttributesRemote } from "../shared/utils/validateSignUpAttributes";
 
 type UiStep = "email" | "emailCode" | "details";

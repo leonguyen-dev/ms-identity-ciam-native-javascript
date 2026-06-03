@@ -1,0 +1,23 @@
+{
+  "name": "token-issuance-function",
+  "version": "1.0.0",
+  "description": "Entra External ID OnTokenIssuanceStart custom claims provider that adds the user's MFA (SMS) phone number to issued tokens, read from Microsoft Graph authentication phoneMethods.",
+  "private": true,
+  "main": "dist/src/functions/*.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "prestart": "npm run build",
+    "start": "func start",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0",
+    "@azure/identity": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "rimraf": "^5.0.0",
+    "typescript": "^5"
+  }
+}
