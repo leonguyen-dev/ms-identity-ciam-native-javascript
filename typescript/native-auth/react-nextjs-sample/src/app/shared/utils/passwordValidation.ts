@@ -2,7 +2,7 @@ export const PASSWORD_GUIDE_ERROR = "Your password does not meet the requirement
 export const CONFIRM_PASSWORD_GUIDE_ERROR =
     "Your password confirmation does not meet the requirements of the password guide";
 export const CONFIRM_PASSWORD_MISMATCH_ERROR =
-    "Your password confirmation does not match your password";
+    "The password entry fields do not match. Please enter the same password in both fields and try again.";
 
 const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_MAX_LENGTH = 20;
