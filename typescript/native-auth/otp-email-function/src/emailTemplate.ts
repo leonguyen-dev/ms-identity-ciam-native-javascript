@@ -14,6 +14,13 @@ const MUTED_COLOR = "#6b7280";
 const FONT_STACK =
     "'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
+// Tasmanian Government crest, served from the deployed Static Web App so it
+// renders in clients that block inline/data-URI images (notably Gmail web and
+// Outlook desktop). PNG (not SVG) because most email clients don't render SVG.
+// Source asset: react-nextjs-sample/public/logos/tasmania-govt-black.png (108x100).
+const TAS_GOVT_LOGO =
+    "https://lively-plant-074801300.7.azurestaticapps.net/logos/tasmania-govt-black.png";
+
 export interface OtpEmailContent {
     subject: string;
     html: string;
@@ -87,9 +94,15 @@ export function buildOtpEmail({ email, code, brandName = "myServiceTas" }: Build
                     This message was sent from an unmonitored email address.<br />
                     Please do not reply to this message.
                   </td>
-                  <td align="right" style="vertical-align:bottom;">
-                    <span style="font-size:22px; font-weight:700; color:${TEXT_COLOR};">Service Tasmania</span><br />
-                    <span style="font-size:11px; color:${MUTED_COLOR}; letter-spacing:0.5px;">TASMANIAN GOVERNMENT</span>
+                  <td align="right" style="vertical-align:middle;">
+                    <table role="presentation" cellpadding="0" cellspacing="0" align="right" style="border-collapse:collapse;">
+                      <tr>
+                        <td style="font-size:24px; font-weight:700; color:${TEXT_COLOR}; padding-right:14px; vertical-align:middle; white-space:nowrap;">Service&nbsp;Tasmania</td>
+                        <td style="border-left:1px solid ${TEXT_COLOR}; padding-left:14px; vertical-align:middle;">
+                          <img src="${TAS_GOVT_LOGO}" width="48" height="44" alt="Tasmanian Government" style="display:block; border:0; outline:none; text-decoration:none;" />
+                        </td>
+                      </tr>
+                    </table>
                   </td>
                 </tr>
               </table>
