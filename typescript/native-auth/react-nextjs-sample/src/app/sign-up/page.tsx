@@ -26,6 +26,12 @@ import {
 } from "@azure/msal-browser/custom-auth";
 import { MfaAuthMethodSelectionForm } from "../shared/components/MfaAuthMethodSelectionForm";
 import { MfaChallengeForm } from "../shared/components/MfaChallengeForm";
+import { WarningIcon } from "../shared/components/FormErrors";
+import { friendlyAuthError, isContinuationTokenExpired, isOtpSendExtensionBlock } from "../shared/utils/friendlyAuthError";
+import { normalizeMobile, toLocalNumber } from "../shared/utils/formatMobile";
+import { pickPhoneMethod } from "../shared/utils/authMethods";
+import { describePasswordError } from "../shared/utils/passwordValidation";
+import { getEmailBlockReason, SERVER_BLOCKED_SIGNUP_MESSAGE } from "../shared/utils/emailBlocklist";
 import { WarningIcon, type FormError } from "../shared/components/FormErrors";
 import { friendlyAuthError, isContinuationTokenExpired } from "../shared/utils/friendlyAuthError";
 import { normalizeMobile, toLocalNumber } from "../shared/utils/formatMobile";
@@ -191,6 +197,10 @@ export default function SignUpPage() {
                     setError("This email address is already linked to another myServiceTas account");
                 } else if (result.error?.isInvalidUsername()) {
                     setError("Please enter a valid email address.");
+                } else if (isOtpSendExtensionBlock(result.error)) {
+                    // The OnOtpSend extension returned a 403 — the server blocklist
+                    // rejected an address the client list didn't catch.
+                    setError(SERVER_BLOCKED_SIGNUP_MESSAGE);
                 } else {
                     handleAuthFailure(result.error, "An error occurred while signing up.");
                 }
