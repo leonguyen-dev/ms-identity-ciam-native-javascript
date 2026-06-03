@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useAuthClient } from "@/auth/AuthClientProvider";
 import styles from "./Navbar.module.css";
@@ -29,9 +30,25 @@ export default function Navbar() {
 
     return (
         <nav className={styles.navbar}>
-            <div className={styles.logo}>
-                <Link href="/">MSAL Auth</Link>
-            </div>
+            <Link href="/" className={styles.logo} aria-label="Service Tasmania home">
+                <Image
+                    src="/logos/tasmania-govt-black.svg"
+                    alt="Tasmanian Government"
+                    width={54}
+                    height={50}
+                    className={styles.logoEmblem}
+                    priority
+                />
+                <span className={styles.logoDivider} aria-hidden="true" />
+                <Image
+                    src="/logos/service-tasmania-black.svg"
+                    alt="Service Tasmania"
+                    width={118}
+                    height={48}
+                    className={styles.logoWordmark}
+                    priority
+                />
+            </Link>
             <div className={styles.links}>
                 <Link href="/" className={styles.link}>
                     Sign In

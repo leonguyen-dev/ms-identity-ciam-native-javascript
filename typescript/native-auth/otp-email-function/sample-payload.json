@@ -1,0 +1,18 @@
+{
+  "type": "microsoft.graph.authenticationEvent.emailOtpSend",
+  "source": "/tenants/a67366e7-9873-4a38-9bae-0a4a18952688/applications/5f0a52ca-f5db-4a6d-9b3a-3180d51fdd08",
+  "data": {
+    "@odata.type": "microsoft.graph.onOtpSendCalloutData",
+    "otpContext": {
+      "identifier": "someone@example.com",
+      "oneTimeCode": "172455"
+    },
+    "tenantId": "a67366e7-9873-4a38-9bae-0a4a18952688",
+    "authenticationContext": {
+      "correlationId": "aaaa0000-bb11-2222-33cc-444444dddddd",
+      "client": { "ip": "127.0.0.1", "locale": "en-us", "market": "en-us" },
+      "protocol": "OAUTH2.0",
+      "requestType": "signUp"
+    }
+  }
+}

@@ -13,6 +13,7 @@ import {
     ResetPasswordPasswordRequiredState,
     ResetPasswordCompletedState,
     AuthFlowStateBase,
+    AuthenticationMethod,
     CustomAuthAccountData,
     SignInCompletedState,
     MfaAwaitingState,
@@ -23,8 +24,9 @@ import { WarningIcon } from "../shared/components/FormErrors";
 import { friendlyAuthError, isContinuationTokenExpired } from "../shared/utils/friendlyAuthError";
 import { pickPhoneMethod } from "../shared/utils/authMethods";
 import { describePasswordError } from "../shared/utils/passwordValidation";
+import { toMobileDisplay } from "../shared/utils/formatMobile";
 
-type UiStep = "email" | "emailCode" | "verifyIdentity" | "smsCode" | "newPassword";
+type UiStep = "email" | "emailCode" | "newPassword" | "verifyIdentity" | "smsCode";
 
 export default function ResetPassword() {
     const app = useAuthClient();
@@ -44,6 +46,7 @@ export default function ResetPassword() {
     const [loading, setLoading] = useState(false);
     const [resetState, setResetState] = useState<AuthFlowStateBase | null>(null);
     const [maskedMobile, setMaskedMobile] = useState<string | undefined>(undefined);
+    const [selectedMfaMethod, setSelectedMfaMethod] = useState<AuthenticationMethod | undefined>(undefined);
     const [data, setData] = useState<CustomAuthAccountData | undefined>(undefined);
 
     useEffect(() => {
@@ -74,6 +77,7 @@ export default function ResetPassword() {
         setNewPassword("");
         setConfirmPassword("");
         setMaskedMobile(undefined);
+        setSelectedMfaMethod(undefined);
         setError(message);
     };
 
@@ -183,30 +187,13 @@ export default function ResetPassword() {
 
             if (state instanceof ResetPasswordPasswordRequiredState) {
                 setResetState(state);
-                setUiStep("verifyIdentity");
+                setUiStep("newPassword");
             }
         } catch (err) {
             handleSubmitException(err, "An error occurred while verifying the code.");
         } finally {
             setLoading(false);
         }
-    };
-
-    const handleVerifyIdentitySubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setUiStep("smsCode");
-    };
-
-    const handleResendSmsCode = () => {
-        setError("");
-        setSmsCode("");
-    };
-
-    const handleSmsCodeSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setUiStep("newPassword");
     };
 
     const handleNewPasswordSubmit = async (e: React.FormEvent) => {
@@ -238,7 +225,39 @@ export default function ResetPassword() {
                 return;
             }
 
-            await completeWithMfa(pwState);
+            const signInResult = await pwState.signIn();
+            const signInState = signInResult.state;
+            const signInData = signInResult.data;
+
+            if (signInResult.isFailed()) {
+                handleAuthFailure(signInResult.error, "An error occurred during sign-in.");
+                return;
+            }
+
+            if (signInState instanceof SignInCompletedState) {
+                setData(signInData);
+                setResetState(signInState);
+                setSignInState(true);
+                return;
+            }
+
+            if (!(signInState instanceof MfaAwaitingState)) {
+                setError("Unexpected state after sign-in.");
+                return;
+            }
+
+            const methods = signInState.getAuthMethods();
+            const phone = pickPhoneMethod(methods);
+
+            if (!phone) {
+                setError("No verification method is available for this account.");
+                setResetState(signInState);
+                return;
+            }
+
+            setSelectedMfaMethod(phone);
+            setResetState(signInState);
+            setUiStep("verifyIdentity");
         } catch (err) {
             handleSubmitException(err, "An error occurred while setting your new password.");
         } finally {
@@ -246,73 +265,97 @@ export default function ResetPassword() {
         }
     };
 
-    const completeWithMfa = async (completedState: ResetPasswordCompletedState) => {
-        const signInResult = await completedState.signIn();
-        const signInState = signInResult.state;
-        const signInData = signInResult.data;
+    const handleVerifyIdentitySubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
 
-        if (signInResult.isFailed()) {
-            handleAuthFailure(signInResult.error, "An error occurred during sign-in.");
+        if (!(resetState instanceof MfaAwaitingState) || !selectedMfaMethod) {
+            resetResetPasswordToStart("Your reset session was lost. Please start again.");
             return;
         }
 
-        if (signInState instanceof SignInCompletedState) {
-            setData(signInData);
-            setResetState(signInState);
-            setSignInState(true);
-            return;
-        }
+        setLoading(true);
+        try {
+            const challengeResult = await resetState.requestChallenge(selectedMfaMethod.id);
+            const challengeState = challengeResult.state;
 
-        if (!(signInState instanceof MfaAwaitingState)) {
-            setError("Unexpected state after sign-in.");
-            return;
-        }
-
-        const methods = signInState.getAuthMethods();
-        const phone = pickPhoneMethod(methods);
-
-        if (!phone) {
-            setError("No verification method is available for this account.");
-            setResetState(signInState);
-            return;
-        }
-
-        const challengeResult = await signInState.requestChallenge(phone.id);
-        const challengeState = challengeResult.state;
-
-        if (challengeResult.isFailed()) {
-            handleAuthFailure(challengeResult.error, "An error occurred while sending the verification code.");
-            return;
-        }
-
-        if (!(challengeState instanceof MfaVerificationRequiredState)) {
-            setError("Unexpected MFA state after requesting the challenge.");
-            return;
-        }
-
-        const sentTo = challengeState.getSentTo();
-        if (sentTo) {
-            setMaskedMobile(sentTo);
-        }
-
-        const submitResult = await challengeState.submitChallenge(smsCode);
-        const submitState = submitResult.state;
-        const submitData = submitResult.data;
-
-        if (submitResult.isFailed()) {
-            if (submitResult.error?.isIncorrectChallenge()) {
-                setError("That SMS code is incorrect. Please go back and re-enter the code.");
-                setResetState(challengeState);
-                setUiStep("smsCode");
-            } else {
-                handleAuthFailure(submitResult.error, "An error occurred while verifying the SMS code.");
+            if (challengeResult.isFailed()) {
+                handleAuthFailure(challengeResult.error, "An error occurred while sending the verification code.");
+                return;
             }
+
+            if (!(challengeState instanceof MfaVerificationRequiredState)) {
+                setError("Unexpected MFA state after requesting the challenge.");
+                return;
+            }
+
+            const sentTo = challengeState.getSentTo();
+            if (sentTo) {
+                setMaskedMobile(sentTo);
+            }
+
+            setResetState(challengeState);
+            setUiStep("smsCode");
+        } catch (err) {
+            handleSubmitException(err, "An error occurred while sending the verification code.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleResendSmsCode = async () => {
+        if (!(resetState instanceof MfaVerificationRequiredState) || !selectedMfaMethod) return;
+
+        setError("");
+        setLoading(true);
+        try {
+            const result = await resetState.requestChallenge(selectedMfaMethod.id);
+            const state = result.state;
+            if (result.isFailed()) {
+                handleAuthFailure(
+                    result.error,
+                    "You hit the limit on the number of text messages. Try again shortly."
+                );
+                return;
+            }
+            setResetState(state);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSmsCodeSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
+
+        if (!(resetState instanceof MfaVerificationRequiredState)) {
+            resetResetPasswordToStart("Your reset session was lost. Please start again.");
             return;
         }
 
-        setData(submitData);
-        setResetState(submitState);
-        setSignInState(true);
+        setLoading(true);
+        try {
+            const submitResult = await resetState.submitChallenge(smsCode);
+            const submitState = submitResult.state;
+            const submitData = submitResult.data;
+
+            if (submitResult.isFailed()) {
+                if (submitResult.error?.isIncorrectChallenge()) {
+                    setError("That SMS code is incorrect. Please try again.");
+                } else {
+                    handleAuthFailure(submitResult.error, "An error occurred while verifying the SMS code.");
+                }
+                return;
+            }
+
+            setData(submitData);
+            setResetState(submitState);
+            setSignInState(true);
+        } catch (err) {
+            handleSubmitException(err, "An error occurred while verifying the SMS code.");
+        } finally {
+            setLoading(false);
+        }
     };
 
     const renderForm = () => {
@@ -366,6 +409,21 @@ export default function ResetPassword() {
             );
         }
 
+        if (uiStep === "newPassword") {
+            return (
+                <NewPasswordForm
+                    onSubmit={handleNewPasswordSubmit}
+                    password={newPassword}
+                    setPassword={setNewPassword}
+                    confirmPassword={confirmPassword}
+                    setConfirmPassword={setConfirmPassword}
+                    loading={loading}
+                    onCancel={handleCancel}
+                    serverError={error}
+                />
+            );
+        }
+
         if (uiStep === "verifyIdentity") {
             return (
                 <VerifyIdentityStep
@@ -377,45 +435,35 @@ export default function ResetPassword() {
             );
         }
 
-        if (uiStep === "smsCode") {
-            return (
-                <VerificationCodeStep
-                    onSubmit={handleSmsCodeSubmit}
-                    code={smsCode}
-                    setCode={setSmsCode}
-                    loading={loading}
-                    onCancel={handleCancel}
-                    onResend={handleResendSmsCode}
-                    fieldId="reset-sms-code"
-                    heading="Enter the code (4/5)"
-                    sentMessage={
-                        maskedMobile ? (
-                            <>We sent a code to <strong>{maskedMobile}</strong></>
-                        ) : (
-                            <>We sent a code to your mobile number.</>
-                        )
-                    }
-                    resendPrompt="Haven't got an SMS from us?"
-                    serverError={error}
-                    defaultCodeLength={6}
-                    placeholder="Enter your code"
-                    submitButtonText="Verify code"
-                    submitButtonLoadingText="Verifying..."
-                    emptyCodeMessage="Please enter the verification code you received."
-                />
-            );
-        }
-
         return (
-            <NewPasswordForm
-                onSubmit={handleNewPasswordSubmit}
-                password={newPassword}
-                setPassword={setNewPassword}
-                confirmPassword={confirmPassword}
-                setConfirmPassword={setConfirmPassword}
+            <VerificationCodeStep
+                onSubmit={handleSmsCodeSubmit}
+                code={smsCode}
+                setCode={setSmsCode}
                 loading={loading}
                 onCancel={handleCancel}
+                onResend={handleResendSmsCode}
+                fieldId="reset-sms-code"
+                heading="Enter the code (5/5)"
+                sentMessage={
+                    maskedMobile ? (
+                        <>We sent a code to <strong>{toMobileDisplay(maskedMobile)}</strong></>
+                    ) : (
+                        <>We sent a code to your mobile number.</>
+                    )
+                }
+                resendPrompt="Haven't got an SMS from us?"
                 serverError={error}
+                expectedCodeLength={
+                    resetState instanceof MfaVerificationRequiredState
+                        ? resetState.getCodeLength()
+                        : undefined
+                }
+                defaultCodeLength={6}
+                placeholder="Enter your code"
+                submitButtonText="Verify code"
+                submitButtonLoadingText="Verifying..."
+                emptyCodeMessage="Please enter the verification code you received."
             />
         );
     };

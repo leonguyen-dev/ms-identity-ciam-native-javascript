@@ -27,12 +27,29 @@ import {
 import { MfaAuthMethodSelectionForm } from "../shared/components/MfaAuthMethodSelectionForm";
 import { MfaChallengeForm } from "../shared/components/MfaChallengeForm";
 import { WarningIcon } from "../shared/components/FormErrors";
+import { friendlyAuthError, isContinuationTokenExpired, isOtpSendExtensionBlock } from "../shared/utils/friendlyAuthError";
+import { normalizeMobile, toLocalNumber } from "../shared/utils/formatMobile";
+import { pickPhoneMethod } from "../shared/utils/authMethods";
+import { describePasswordError } from "../shared/utils/passwordValidation";
+import { getEmailBlockReason, SERVER_BLOCKED_SIGNUP_MESSAGE } from "../shared/utils/emailBlocklist";
+import { WarningIcon, type FormError } from "../shared/components/FormErrors";
 import { friendlyAuthError, isContinuationTokenExpired } from "../shared/utils/friendlyAuthError";
 import { normalizeMobile, toLocalNumber } from "../shared/utils/formatMobile";
 import { pickPhoneMethod } from "../shared/utils/authMethods";
 import { describePasswordError } from "../shared/utils/passwordValidation";
+import { getEmailBlockReason } from "../shared/utils/emailBlocklist";
+import { validateSignUpAttributesRemote } from "../shared/utils/validateSignUpAttributes";
 
 type UiStep = "email" | "emailCode" | "details";
+
+// Maps server-side validation field keys (api/src/attributeValidation.ts) to the
+// DetailsStep input DOM ids, so each server error can render inline beneath its field.
+const SERVER_FIELD_TO_INPUT_ID: Record<string, string> = {
+    givenName: "signup-given-name",
+    surname: "signup-family-name",
+    dateOfBirth: "signup-dob",
+    termsAccepted: "signup-terms",
+};
 
 export default function SignUpPage() {
     const router = useRouter();
@@ -53,6 +70,7 @@ export default function SignUpPage() {
     const [smsCode, setSmsCode] = useState("");
 
     const [error, setError] = useState("");
+    const [attributeErrors, setAttributeErrors] = useState<FormError[]>([]);
     const [loading, setLoading] = useState(false);
     const [signUpState, setSignUpState] = useState<AuthFlowStateBase | null>(null);
     const [loadingAccountStatus, setLoadingAccountStatus] = useState(true);
@@ -85,19 +103,18 @@ export default function SignUpPage() {
     };
 
     const handleResendCode = async () => {
-        if (!authClient || !email) return;
+        if (!(signUpState instanceof SignUpCodeRequiredState)) return;
         setError("");
         setLoading(true);
         try {
-            const result = await authClient.signUp({ username: email });
+            const result = await signUpState.resendCode();
             const state = result.state;
+
             if (result.isFailed()) {
                 handleAuthFailure(result.error, "Failed to resend the code.");
                 return;
             }
-            if (state instanceof SignUpCodeRequiredState) {
-                setSignUpState(state);
-            }
+            setSignUpState(state);
         } catch (err) {
             handleSubmitException(err, "Failed to resend the code.");
         } finally {
@@ -122,6 +139,7 @@ export default function SignUpPage() {
         setSelectedMfaAuthMethod(undefined);
         setMfaChallenge("");
         setPhoneAuthMethod(undefined);
+        setAttributeErrors([]);
         setError(message);
     };
 
@@ -160,6 +178,13 @@ export default function SignUpPage() {
     const handleEmailSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
+
+        const blockReason = getEmailBlockReason(email);
+        if (blockReason) {
+            setError(blockReason);
+            return;
+        }
+
         if (!authClient) return;
         setLoading(true);
 
@@ -172,6 +197,10 @@ export default function SignUpPage() {
                     setError("This email address is already linked to another myServiceTas account");
                 } else if (result.error?.isInvalidUsername()) {
                     setError("Please enter a valid email address.");
+                } else if (isOtpSendExtensionBlock(result.error)) {
+                    // The OnOtpSend extension returned a 403 — the server blocklist
+                    // rejected an address the client list didn't catch.
+                    setError(SERVER_BLOCKED_SIGNUP_MESSAGE);
                 } else {
                     handleAuthFailure(result.error, "An error occurred while signing up.");
                 }
@@ -242,10 +271,36 @@ export default function SignUpPage() {
     const handleDetailsSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
+        setAttributeErrors([]);
         if (!authClient) return;
         setLoading(true);
 
         try {
+            // Server-side validation gate (Option A). Native auth has no
+            // OnAttributeCollectionSubmit hook, so we run the authoritative business-rule
+            // check here before mutating any server-side flow state. The DetailsStep
+            // component already did the same checks client-side for fast feedback.
+            const validation = await validateSignUpAttributesRemote({
+                givenName,
+                surname: familyName,
+                dateOfBirth,
+                termsAccepted,
+            });
+            if (!validation.valid) {
+                // The server validates every field and returns them all in `errors`,
+                // keyed by attribute name. Attach each field's input id so the message
+                // renders both in the summary and inline beneath its field. Errors with
+                // no field key (e.g. the proxy-unreachable fallback) show in the summary.
+                const fieldErrors = validation.errors ?? {};
+                const keys = Object.keys(fieldErrors);
+                setAttributeErrors(
+                    keys.length > 0
+                        ? keys.map((key) => ({ id: SERVER_FIELD_TO_INPUT_ID[key], message: fieldErrors[key] }))
+                        : [{ message: validation.message ?? "One or more details are invalid." }]
+                );
+                return;
+            }
+
             const attributes: UserAccountAttributes = {
                 displayName: `${givenName} ${familyName}`.trim(),
                 givenName,
@@ -277,6 +332,14 @@ export default function SignUpPage() {
                 if (dobAttr) {
                     attributes[dobAttr.name] = dateOfBirth;
                 }
+
+                const termsAttr = required.find((a) => a.name.endsWith("termsAndConditions"));
+                if (termsAttr) {
+                    // Boolean attribute: send a real JSON boolean, not the string "true".
+                    // UserAccountAttributes is typed Record<string, string>, so cast to assign.
+                    (attributes as Record<string, unknown>)[termsAttr.name] = termsAccepted;
+                }
+
                 const attrResult = await nextState.submitAttributes(attributes);
                 const stateAfterAttr = attrResult.state;
 
@@ -658,6 +721,7 @@ export default function SignUpPage() {
         return (
             <DetailsStep
                 onSubmit={handleDetailsSubmit}
+                serverErrors={attributeErrors}
                 password={password}
                 setPassword={setPassword}
                 confirmPassword={confirmPassword}
