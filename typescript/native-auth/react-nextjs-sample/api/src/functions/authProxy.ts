@@ -1,4 +1,5 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
+import { validateSignUpAttributes, AttributeInput } from "../attributeValidation";
 
 /**
  * Native-auth CORS proxy for Azure Static Web Apps.
@@ -24,6 +25,25 @@ const STRIP_RESPONSE_HEADERS = new Set(["content-encoding", "content-length", "t
 
 export async function authProxy(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
     const path = request.params.path ?? "";
+
+    // Server-side sign-up attribute validation (Option A). Native auth has no
+    // OnAttributeCollectionSubmit hook, so this is the authoritative business-rule
+    // check the client calls before submitAttributes(). Handled here rather than
+    // forwarded upstream, because the catch-all route below otherwise proxies every
+    // /api/* path to CIAM.
+    if (path === "validate-attributes") {
+        if (request.method.toUpperCase() !== "POST") {
+            return { status: 405, jsonBody: { error: "Method not allowed." } };
+        }
+        let body: unknown;
+        try {
+            body = await request.json();
+        } catch {
+            return { status: 400, jsonBody: { valid: false, errors: {}, message: "Invalid request body." } };
+        }
+        return { status: 200, jsonBody: validateSignUpAttributes(body as AttributeInput) };
+    }
+
     const query = request.query.toString();
     const targetUrl = `${TENANT_BASE}/${path}${query ? `?${query}` : ""}`;
 
