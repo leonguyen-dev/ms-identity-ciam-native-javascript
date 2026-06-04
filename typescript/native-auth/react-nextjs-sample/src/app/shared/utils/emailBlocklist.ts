@@ -22,7 +22,7 @@ export const SERVER_BLOCKED_SIGNUP_MESSAGE =
 
 // Exact email addresses to block
 const BLOCKED_EMAILS: string[] = [
-    "blocked@example.com",
+    "someone@example.com",
 ];
 
 // Domains to block. Matches the domain itself and any subdomain

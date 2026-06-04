@@ -134,7 +134,7 @@ http.createServer((req, res) => {
             let result;
             try {
                 result = validateSignUpAttributes(JSON.parse(raw || "{}"));
-            } catch (err) {
+            } catch {
                 result = { valid: false, errors: {}, message: "Invalid request body." };
             }
             res.writeHead(200, { ...corsHeaders, "Content-Type": "application/json" });
