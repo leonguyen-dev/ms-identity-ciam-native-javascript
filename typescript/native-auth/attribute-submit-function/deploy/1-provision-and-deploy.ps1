@@ -20,11 +20,11 @@
 
 [CmdletBinding()]
 param(
-    [string]$SubscriptionId = "",                              # blank = current az account
-    [string]$ResourceGroup  = "rg-myservicetas-poc",
-    [string]$Location       = "australiaeast",
-    [string]$FunctionApp    = "func-st-attr-submit-poc",        # must be globally unique
-    [string]$StorageAccount = "stattrsubmitpoc",               # 3-24 lowercase alphanumeric, globally unique
+    [string]$SubscriptionId = "",                                    # blank = current az account
+    [string]$ResourceGroup  = "EntraExternalIDPoC",
+    [string]$Location       = "australiasoutheast",
+    [string]$FunctionApp    = "myservicetas-poc-attr-submit-func",   # must be globally unique
+    [string]$StorageAccount = "entraexternalidpoc95d9",                     # 3-24 lowercase alphanumeric, globally unique
 
     # Mock backend block lists (see src/mockBackend.ts).
     [string]$BlockedEmails  = "blocked@example.com,denied@example.com",
