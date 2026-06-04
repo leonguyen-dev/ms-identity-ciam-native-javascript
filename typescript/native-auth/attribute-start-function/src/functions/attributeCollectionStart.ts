@@ -85,17 +85,6 @@ export async function attributeCollectionStart(
         return { status: 400, jsonBody: { error: "Invalid JSON body." } };
     }
 
-    // TEMP DIAGNOSTIC — remove after testing. Unconditionally block EVERY sign-up so
-    // we can confirm whether Entra invokes this extension at all in the native-auth
-    // flow. If a sign-up still reaches attribute collection, the extension wasn't called.
-    context.log("OnAttributeCollectionStart: TEMP unconditional block — request received.");
-    return blockPageResponse(
-        "Registration blocked (diagnostic)",
-        "TEMP diagnostic block — if you can read this, the OnAttributeCollectionStart extension WAS invoked."
-    );
-
-    /* TEMP DIAGNOSTIC — original logic disabled while probing whether the extension
-       fires. Restore this block (and delete the unconditional block above) after testing.
     // The verified email arrives as an "email" identity, not as an attribute.
     const email = payload.data?.userSignUpInfo?.identities?.find(
         (id) => id.signInType === "email"
@@ -115,7 +104,6 @@ export async function attributeCollectionStart(
 
     context.log(`OnAttributeCollectionStart: '${email}' allowed; continuing.`);
     return continueResponse;
-    */
 }
 
 app.http("attributeCollectionStart", {
