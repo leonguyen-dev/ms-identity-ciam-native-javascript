@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Provision a NEW Azure Function App for the OnAttributeCollectionSubmit extension,
+    Provision a NEW Azure Function App for the OnAttributeCollectionStart extension,
     set its app settings, and publish the code.
 
 .DESCRIPTION
-    Step 1 of wiring attribute-submit-function into Entra. Run this, then
+    Step 1 of wiring attribute-start-function into Entra. Run this, then
     2-register-extension.ps1. Easy Auth (token protection) is handled separately —
     see deploy/README.md ("Protect the function") — because it must mirror the
     identity-provider config already on the OTP function app.
@@ -20,20 +20,20 @@
 
 [CmdletBinding()]
 param(
-    [string]$SubscriptionId = "",                                    # blank = current az account
+    [string]$SubscriptionId = "",                                   # blank = current az account
     [string]$ResourceGroup  = "EntraExternalIDPoC",
     [string]$Location       = "australiasoutheast",
-    [string]$FunctionApp    = "myservicetas-poc-attr-submit-func",   # must be globally unique
-    [string]$StorageAccount = "entraexternalidpoc95d9",                     # 3-24 lowercase alphanumeric, globally unique
+    [string]$FunctionApp    = "myservicetas-poc-attr-start-func",   # must be globally unique
+    [string]$StorageAccount = "entraexternalidpoc95cb",                     # 3-24 lowercase alphanumeric, globally unique
 
-    # Mock backend block lists (see src/mockBackend.ts).
-    [string]$BlockedEmails  = "blocked@example.com,denied@example.com",
-    [string]$BlockedDomains = "blocked.example.com,mailinator.com",
-    [string]$EmailAttributeKey = "email"
+    # Blocklists (comma-separated, case-insensitive). Keep in sync with the React
+    # client's emailBlocklist.ts. Domains also match their subdomains.
+    [string]$BlockedEmails  = "someone@example.com,blocked@example.com",
+    [string]$BlockedDomains = "mailinator.com"
 )
 
 $ErrorActionPreference = "Stop"
-$funcRoot = Split-Path $PSScriptRoot -Parent   # the attribute-submit-function folder
+$funcRoot = Split-Path $PSScriptRoot -Parent   # the attribute-start-function folder
 
 if ($SubscriptionId) { az account set --subscription $SubscriptionId }
 Write-Host "Using subscription:" (az account show --query name -o tsv)
@@ -54,11 +54,10 @@ az functionapp create `
     --runtime node --runtime-version 20 --functions-version 4 `
     --os-type Linux -o none
 
-Write-Host "==> App settings (mock block lists)"
+Write-Host "==> App settings (blocklists)"
 az functionapp config appsettings set --name $FunctionApp --resource-group $ResourceGroup --settings `
     "BLOCKED_EMAILS=$BlockedEmails" `
-    "BLOCKED_DOMAINS=$BlockedDomains" `
-    "EMAIL_ATTRIBUTE_KEY=$EmailAttributeKey" -o none
+    "BLOCKED_DOMAINS=$BlockedDomains" -o none
 
 Write-Host "==> Building + publishing the function code"
 Push-Location $funcRoot
@@ -73,7 +72,7 @@ finally {
 
 # Build the target URL (including the ?code= host key) for the registration step.
 $key = az functionapp keys list --name $FunctionApp --resource-group $ResourceGroup --query "functionKeys.default" -o tsv
-$targetUrl = "https://$FunctionApp.azurewebsites.net/api/attributeCollectionSubmit?code=$key"
+$targetUrl = "https://$FunctionApp.azurewebsites.net/api/attributeCollectionStart?code=$key"
 
 Write-Host "`n=========================================================="
 Write-Host "Deployed. Target URL for the custom extension:" -ForegroundColor Green
