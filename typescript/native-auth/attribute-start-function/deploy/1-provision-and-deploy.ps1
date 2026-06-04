@@ -20,11 +20,11 @@
 
 [CmdletBinding()]
 param(
-    [string]$SubscriptionId = "",                              # blank = current az account
-    [string]$ResourceGroup  = "rg-myservicetas-poc",
-    [string]$Location       = "australiaeast",
-    [string]$FunctionApp    = "func-st-attr-start-poc",         # must be globally unique
-    [string]$StorageAccount = "stattrstartpoc",                # 3-24 lowercase alphanumeric, globally unique
+    [string]$SubscriptionId = "",                                   # blank = current az account
+    [string]$ResourceGroup  = "EntraExternalIDPoC",
+    [string]$Location       = "australiasoutheast",
+    [string]$FunctionApp    = "myservicetas-poc-attr-start-func",   # must be globally unique
+    [string]$StorageAccount = "entraexternalidpoc95cb",                     # 3-24 lowercase alphanumeric, globally unique
 
     # Blocklists (comma-separated, case-insensitive). Keep in sync with the React
     # client's emailBlocklist.ts. Domains also match their subdomains.
