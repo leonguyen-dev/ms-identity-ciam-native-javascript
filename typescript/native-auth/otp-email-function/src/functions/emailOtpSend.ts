@@ -38,6 +38,12 @@ const connectionString = process.env.COMMUNICATION_SERVICES_CONNECTION_STRING;
 const senderAddress = process.env.COMMUNICATION_SERVICES_SENDER_ADDRESS;
 const brandName = process.env.MAIL_SENDER_DISPLAY_NAME || "myServiceTas";
 
+// Build the ACS client once at module load and reuse it across warm
+// invocations. Constructing it per-call rebuilds the HTTP pipeline + auth
+// policy every time, adding avoidable latency under Entra's ~2s callout budget.
+// Undefined if the connection string is missing; the handler guards on that.
+const emailClient = connectionString ? new EmailClient(connectionString) : undefined;
+
 // Shape of the slice of the Entra payload we consume. See:
 // https://learn.microsoft.com/entra/identity-platform/custom-extension-email-otp-send-data
 interface OnOtpSendPayload {
@@ -67,7 +73,7 @@ export async function emailOtpSend(
     request: HttpRequest,
     context: InvocationContext
 ): Promise<HttpResponseInit> {
-    if (!connectionString || !senderAddress) {
+    if (!emailClient || !senderAddress) {
         context.error("ACS settings missing: set COMMUNICATION_SERVICES_CONNECTION_STRING and COMMUNICATION_SERVICES_SENDER_ADDRESS.");
         return { status: 500, jsonBody: { error: "Email provider not configured." } };
     }
@@ -106,7 +112,6 @@ export async function emailOtpSend(
     }
 
     try {
-        const client = new EmailClient(connectionString);
         const { subject, html, plainText } = buildOtpEmail({ email, code, brandName });
         const message: EmailMessage = {
             senderAddress,
@@ -119,7 +124,7 @@ export async function emailOtpSend(
         // status (routinely several seconds) and trip CustomExtensionTimedOut.
         // beginSend resolving means ACS has accepted the message and will
         // deliver it server-side, so we don't need to poll for completion.
-        await client.beginSend(message);
+        await emailClient.beginSend(message);
         context.log(`OTP email queued (requestType=${requestType})`);
 
         return continueResponse;
