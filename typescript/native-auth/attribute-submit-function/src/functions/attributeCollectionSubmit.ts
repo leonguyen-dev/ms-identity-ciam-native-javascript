@@ -8,7 +8,10 @@ import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/fu
  *      (DD/MM/YYYY) for someone at least 16 years old. A failure returns
  *      `showValidationError` keyed to the attribute so the hosted page re-prompts the
  *      user inline.
- *   2. returns `continueWithDefaultBehavior` so Entra completes the sign-up.
+ *   2. composes `displayName` from the collected `givenName` and `surname` and returns
+ *      `modifyAttributeValues` so Entra persists it. (`displayName` must be one of the
+ *      attributes collected by the user flow, otherwise the modify is ignored.)
+ *   3. otherwise returns `continueWithDefaultBehavior` so Entra completes the sign-up.
  *
  * Auth: protect this endpoint with the Function App's built-in Authentication
  * (Easy Auth) wired to the "On Attribute Collection Submit API Authentication" app
@@ -50,6 +53,26 @@ const continueResponse: HttpResponseInit = {
         },
     },
 };
+
+// Overwrite the values the user submitted with the supplied attributes. Only
+// attributes that are part of the user flow's collection are honored; anything else
+// is ignored by Entra.
+function modifyAttributeValuesResponse(attributes: Record<string, string | number | boolean>): HttpResponseInit {
+    return {
+        status: 200,
+        jsonBody: {
+            data: {
+                "@odata.type": RESPONSE_DATA_TYPE,
+                actions: [
+                    {
+                        "@odata.type": "microsoft.graph.attributeCollectionSubmit.modifyAttributeValues",
+                        attributes,
+                    },
+                ],
+            },
+        },
+    };
+}
 
 // Re-prompt the user with a field-level error keyed to the offending attribute.
 // `attributeErrors` keys must match the attribute names exactly as Entra sent them
@@ -150,7 +173,17 @@ export async function attributeCollectionSubmit(
         );
     }
 
-    // 2. Success — let Entra complete the sign-up.
+    // 2. Compose displayName from the collected givenName and surname. Both are
+    //    built-in attributes, so they arrive unprefixed. Only overwrite when at least
+    //    one part is present; otherwise leave Entra's default behavior untouched.
+    const givenName = asString(attributes["givenName"])?.trim();
+    const surname = asString(attributes["surname"])?.trim();
+    const displayName = [givenName, surname].filter(Boolean).join(" ");
+    if (displayName.length > 0) {
+        return modifyAttributeValuesResponse({ displayName });
+    }
+
+    // 3. Success — let Entra complete the sign-up.
     return continueResponse;
 }
 
