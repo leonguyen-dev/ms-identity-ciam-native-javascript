@@ -112,17 +112,24 @@ function ageOn(dob: Date, now: Date): number {
     return age;
 }
 
+// Result of validating the date of birth: either an `error` message to show the
+// user, or the `normalized` value (zero-padded DD/MM/YYYY) to persist.
+interface DateOfBirthResult {
+    error?: string;
+    normalized?: string;
+}
+
 // Validate the collected date of birth. The hosted sign-up page submits it as
-// D/M/YYYY or DD/MM/YYYY (day-first). Returns an error message to show the user,
-// or null if the value is a real calendar date for someone at least MIN_AGE.
-function validateDateOfBirth(value: string | undefined): string | null {
+// D/M/YYYY or DD/MM/YYYY (day-first). On success, returns the value normalized to
+// zero-padded DD/MM/YYYY (e.g. 3/8/2009 -> 03/08/2009).
+function validateDateOfBirth(value: string | undefined): DateOfBirthResult {
     if (!value || value.trim().length === 0) {
-        return "Please provide your date of birth.";
+        return { error: "Please provide your date of birth." };
     }
 
     const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value.trim());
     if (!match) {
-        return "Please enter your date of birth as DD/MM/YYYY.";
+        return { error: "Please enter your date of birth as DD/MM/YYYY." };
     }
 
     const day = Number(match[1]);
@@ -133,19 +140,20 @@ function validateDateOfBirth(value: string | undefined): string | null {
     // Reject impossible dates that the Date constructor silently rolls over
     // (e.g. 31/02/2020 would otherwise become 02/03/2020).
     if (dob.getUTCFullYear() !== year || dob.getUTCMonth() !== month - 1 || dob.getUTCDate() !== day) {
-        return "Please enter a valid date of birth.";
+        return { error: "Please enter a valid date of birth." };
     }
 
     const now = new Date();
     if (dob.getTime() > now.getTime()) {
-        return "Your date of birth can't be in the future.";
+        return { error: "Your date of birth can't be in the future." };
     }
 
     if (ageOn(dob, now) < MIN_AGE) {
-        return `You must be at least ${MIN_AGE} years old to register.`;
+        return { error: `You must be at least ${MIN_AGE} years old to register.` };
     }
 
-    return null;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return { normalized: `${pad(day)}/${pad(month)}/${year}` };
 }
 
 export async function attributeCollectionSubmit(
@@ -161,16 +169,23 @@ export async function attributeCollectionSubmit(
 
     const attributes = payload.data?.userSignUpInfo?.attributes ?? {};
 
+    // Attributes to overwrite, accumulated across the steps below and returned as a
+    // single modifyAttributeValues action.
+    const modified: Record<string, string | number | boolean> = {};
+
     // 1. Date-of-birth validation. The attribute name is prefixed for custom
-    //    attributes (extension_<appid>_dateOfBirth), so match by suffix and key the
-    //    error back to the exact name Entra sent.
+    //    attributes (extension_<appid>_dateOfBirth), so match by suffix and key both
+    //    the error and the normalized value back to the exact name Entra sent.
     const dobKey = Object.keys(attributes).find((key) => key.toLowerCase().endsWith("dateofbirth"));
-    const dobError = validateDateOfBirth(dobKey ? asString(attributes[dobKey]) : undefined);
-    if (dobError) {
+    const dob = validateDateOfBirth(dobKey ? asString(attributes[dobKey]) : undefined);
+    if (dob.error) {
         return validationErrorResponse(
-            { [dobKey ?? "dateOfBirth"]: dobError },
+            { [dobKey ?? "dateOfBirth"]: dob.error },
             "Please fix the highlighted fields to continue."
         );
+    }
+    if (dobKey && dob.normalized) {
+        modified[dobKey] = dob.normalized;
     }
 
     // 2. Compose displayName from the collected givenName and surname. Both are
@@ -180,10 +195,13 @@ export async function attributeCollectionSubmit(
     const surname = asString(attributes["surname"])?.trim();
     const displayName = [givenName, surname].filter(Boolean).join(" ");
     if (displayName.length > 0) {
-        return modifyAttributeValuesResponse({ displayName });
+        modified["displayName"] = displayName;
     }
 
-    // 3. Success — let Entra complete the sign-up.
+    // 3. Persist any overwrites; otherwise let Entra complete the sign-up unchanged.
+    if (Object.keys(modified).length > 0) {
+        return modifyAttributeValuesResponse(modified);
+    }
     return continueResponse;
 }
 
