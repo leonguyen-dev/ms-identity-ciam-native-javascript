@@ -32,7 +32,7 @@ param(
     [Parameter(Mandatory)] [string]$TargetUrl,                 # from step 1 (includes ?code=)
     [string]$TenantId   = "a67366e7-9873-4a38-9bae-0a4a18952688",  # myservicetasdevpoc
     [string]$DisplayName = "ServiceTas - On Attribute Collection Submit",
-    [string]$Description = "Validates sign-up email (mock /Portal/checkAccess) and registers the user in TFS (mock /B2CPortal/createSignUp).",
+    [string]$Description = "Validates the collected date of birth (DD/MM/YYYY, age 16+) and composes displayName from givenName + surname.",
 
     # Optional overrides. If blank, the script discovers them:
     #   ResourceId  - copied from the existing OnOtpSend extension.
