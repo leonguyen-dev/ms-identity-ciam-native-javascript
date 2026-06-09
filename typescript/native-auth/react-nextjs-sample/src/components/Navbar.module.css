@@ -9,14 +9,27 @@
 }
 
 .logo {
-    font-size: 1.5rem;
-    font-weight: 800;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    text-decoration: none;
 }
 
-.logo a {
-    text-decoration: none;
-    color: #267151;
-    font-weight: 800;
+.logoEmblem {
+    height: 3.25rem;
+    width: auto;
+}
+
+.logoDivider {
+    width: 1px;
+    align-self: stretch;
+    margin: 0 0;
+    background-color: #000;
+}
+
+.logoWordmark {
+    height: 3rem;
+    width: auto;
 }
 
 .links {

@@ -24,12 +24,7 @@ param(
     [string]$ResourceGroup  = "EntraExternalIDPoC",
     [string]$Location       = "australiasoutheast",
     [string]$FunctionApp    = "myservicetas-poc-attr-submit-func",   # must be globally unique
-    [string]$StorageAccount = "entraexternalidpoc95d9",                     # 3-24 lowercase alphanumeric, globally unique
-
-    # Mock backend block lists (see src/mockBackend.ts).
-    [string]$BlockedEmails  = "blocked@example.com,denied@example.com",
-    [string]$BlockedDomains = "blocked.example.com,mailinator.com",
-    [string]$EmailAttributeKey = "email"
+    [string]$StorageAccount = "entraexternalidpoc95d9"                      # 3-24 lowercase alphanumeric, globally unique
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,12 +48,6 @@ az functionapp create `
     --consumption-plan-location $Location `
     --runtime node --runtime-version 20 --functions-version 4 `
     --os-type Linux -o none
-
-Write-Host "==> App settings (mock block lists)"
-az functionapp config appsettings set --name $FunctionApp --resource-group $ResourceGroup --settings `
-    "BLOCKED_EMAILS=$BlockedEmails" `
-    "BLOCKED_DOMAINS=$BlockedDomains" `
-    "EMAIL_ATTRIBUTE_KEY=$EmailAttributeKey" -o none
 
 Write-Host "==> Building + publishing the function code"
 Push-Location $funcRoot

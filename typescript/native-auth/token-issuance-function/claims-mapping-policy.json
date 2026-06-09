@@ -1,0 +1,13 @@
+{
+  "ClaimsMappingPolicy": {
+    "Version": 1,
+    "IncludeBasicClaimSet": "true",
+    "ClaimsSchema": [
+      {
+        "Source": "CustomClaimsProvider",
+        "ID": "phoneNumber",
+        "JwtClaimType": "phone_number"
+      }
+    ]
+  }
+}

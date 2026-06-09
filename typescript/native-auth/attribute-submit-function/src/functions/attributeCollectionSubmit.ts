@@ -1,25 +1,20 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
-import { checkAccess, createSignUp } from "../mockBackend";
 
 /**
  * Entra External ID "OnAttributeCollectionSubmit" custom authentication extension.
  *
- * Entra POSTs the attributes the user submitted on the sign-up page (plus their
- * verified email identity). This function:
- *   1. validates the email against the ServiceTas portal — mock of /Portal/checkAccess.
- *      A blocked email returns `showBlockPage`, stopping the sign-up with a
- *      full-page message. (It deliberately does NOT use `showValidationError`: the
- *      email is a verified identity, not a collected attribute, so a validation
- *      error keyed to it is dropped by native auth and rejected by the hosted flow.
- *      See README.)
- *   2. registers the user in TFS — mock of /B2CPortal/createSignUp.
- *   3. returns `continueWithDefaultBehavior` so Entra completes the sign-up.
- *
- * Both backend calls are mocked in ../mockBackend for the POC; swap them for real
- * HTTPS calls without touching this handler.
+ * Entra POSTs the attributes the user submitted on the sign-up page. This function:
+ *   1. validates the collected dateOfBirth attribute — must be a real calendar date
+ *      (DD/MM/YYYY) for someone at least 16 years old. A failure returns
+ *      `showValidationError` keyed to the attribute so the hosted page re-prompts the
+ *      user inline.
+ *   2. composes `displayName` from the collected `givenName` and `surname` and returns
+ *      `modifyAttributeValues` so Entra persists it. (`displayName` must be one of the
+ *      attributes collected by the user flow, otherwise the modify is ignored.)
+ *   3. otherwise returns `continueWithDefaultBehavior` so Entra completes the sign-up.
  *
  * Auth: protect this endpoint with the Function App's built-in Authentication
- * (Easy Auth) wired to the "Azure Functions authentication events API" app
+ * (Easy Auth) wired to the "On Attribute Collection Submit API Authentication" app
  * registration, per the Microsoft setup guide. The `function` authLevel key is a
  * second factor but is not a substitute for token validation in production.
  *
@@ -59,8 +54,10 @@ const continueResponse: HttpResponseInit = {
     },
 };
 
-// Stop the sign-up with a full-page message (a blocked email or a backend failure).
-function blockPageResponse(title: string, message: string): HttpResponseInit {
+// Overwrite the values the user submitted with the supplied attributes. Only
+// attributes that are part of the user flow's collection are honored; anything else
+// is ignored by Entra.
+function modifyAttributeValuesResponse(attributes: Record<string, string | number | boolean>): HttpResponseInit {
     return {
         status: 200,
         jsonBody: {
@@ -68,9 +65,29 @@ function blockPageResponse(title: string, message: string): HttpResponseInit {
                 "@odata.type": RESPONSE_DATA_TYPE,
                 actions: [
                     {
-                        "@odata.type": "microsoft.graph.attributeCollectionSubmit.showBlockPage",
-                        title,
+                        "@odata.type": "microsoft.graph.attributeCollectionSubmit.modifyAttributeValues",
+                        attributes,
+                    },
+                ],
+            },
+        },
+    };
+}
+
+// Re-prompt the user with a field-level error keyed to the offending attribute.
+// `attributeErrors` keys must match the attribute names exactly as Entra sent them
+// (custom attributes arrive prefixed, e.g. extension_<appid>_dateOfBirth).
+function validationErrorResponse(attributeErrors: Record<string, string>, message: string): HttpResponseInit {
+    return {
+        status: 200,
+        jsonBody: {
+            data: {
+                "@odata.type": RESPONSE_DATA_TYPE,
+                actions: [
+                    {
+                        "@odata.type": "microsoft.graph.attributeCollectionSubmit.showValidationError",
                         message,
+                        attributeErrors,
                     },
                 ],
             },
@@ -80,6 +97,63 @@ function blockPageResponse(title: string, message: string): HttpResponseInit {
 
 function asString(value: AttributeValue | undefined): string | undefined {
     return typeof value?.value === "string" ? value.value : undefined;
+}
+
+const MIN_AGE = 16;
+
+// Whole years between `dob` and `now`, computed in UTC so a local timezone can't
+// shift the result by a day either side of a birthday.
+function ageOn(dob: Date, now: Date): number {
+    let age = now.getUTCFullYear() - dob.getUTCFullYear();
+    const monthDelta = now.getUTCMonth() - dob.getUTCMonth();
+    if (monthDelta < 0 || (monthDelta === 0 && now.getUTCDate() < dob.getUTCDate())) {
+        age--;
+    }
+    return age;
+}
+
+// Result of validating the date of birth: either an `error` message to show the
+// user, or the `normalized` value (zero-padded DD/MM/YYYY) to persist.
+interface DateOfBirthResult {
+    error?: string;
+    normalized?: string;
+}
+
+// Validate the collected date of birth. The hosted sign-up page submits it as
+// D/M/YYYY or DD/MM/YYYY (day-first). On success, returns the value normalized to
+// zero-padded DD/MM/YYYY (e.g. 3/8/2009 -> 03/08/2009).
+function validateDateOfBirth(value: string | undefined): DateOfBirthResult {
+    if (!value || value.trim().length === 0) {
+        return { error: "Please provide your date of birth." };
+    }
+
+    const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value.trim());
+    if (!match) {
+        return { error: "Please enter your date of birth as DD/MM/YYYY." };
+    }
+
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = Number(match[3]);
+    const dob = new Date(Date.UTC(year, month - 1, day));
+
+    // Reject impossible dates that the Date constructor silently rolls over
+    // (e.g. 31/02/2020 would otherwise become 02/03/2020).
+    if (dob.getUTCFullYear() !== year || dob.getUTCMonth() !== month - 1 || dob.getUTCDate() !== day) {
+        return { error: "Please enter a valid date of birth." };
+    }
+
+    const now = new Date();
+    if (dob.getTime() > now.getTime()) {
+        return { error: "Your date of birth can't be in the future." };
+    }
+
+    if (ageOn(dob, now) < MIN_AGE) {
+        return { error: `You must be at least ${MIN_AGE} years old to register.` };
+    }
+
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return { normalized: `${pad(day)}/${pad(month)}/${year}` };
 }
 
 export async function attributeCollectionSubmit(
@@ -93,49 +167,41 @@ export async function attributeCollectionSubmit(
         return { status: 400, jsonBody: { error: "Invalid JSON body." } };
     }
 
-    const userInfo = payload.data?.userSignUpInfo;
-    const attributes = userInfo?.attributes ?? {};
+    const attributes = payload.data?.userSignUpInfo?.attributes ?? {};
 
-    // The verified email arrives as an "email" identity, not as an attribute.
-    const email = userInfo?.identities?.find((id) => id.signInType === "email")?.issuerAssignedId;
-    if (!email) {
-        return { status: 400, jsonBody: { error: "Missing email identity in userSignUpInfo.identities." } };
-    }
+    // Attributes to overwrite, accumulated across the steps below and returned as a
+    // single modifyAttributeValues action.
+    const modified: Record<string, string | number | boolean> = {};
 
-    // 1. Email validation — mock of /Portal/checkAccess.
-    let decision;
-    try {
-        decision = await checkAccess(email, context);
-    } catch (error) {
-        context.error("checkAccess failed:", error);
-        return blockPageResponse("We couldn't verify your details", "Sign-up is temporarily unavailable. Please try again later.");
-    }
-
-    if (!decision.allowed) {
-        return blockPageResponse(
-            "Registration blocked",
-            decision.reason ?? "This email address can't be used to register."
+    // 1. Date-of-birth validation. The attribute name is prefixed for custom
+    //    attributes (extension_<appid>_dateOfBirth), so match by suffix and key both
+    //    the error and the normalized value back to the exact name Entra sent.
+    const dobKey = Object.keys(attributes).find((key) => key.toLowerCase().endsWith("dateofbirth"));
+    const dob = validateDateOfBirth(dobKey ? asString(attributes[dobKey]) : undefined);
+    if (dob.error) {
+        return validationErrorResponse(
+            { [dobKey ?? "dateOfBirth"]: dob.error },
+            "Please fix the highlighted fields to continue."
         );
     }
-
-    // 2. TFS user registration — mock of /B2CPortal/createSignUp.
-    try {
-        const { tfsUserId } = await createSignUp(
-            {
-                email,
-                givenName: asString(attributes.givenName),
-                surname: asString(attributes.surname),
-                displayName: asString(attributes.displayName),
-            },
-            context
-        );
-        context.log(`Sign-up registered in TFS (tfsUserId=${tfsUserId}); continuing flow.`);
-    } catch (error) {
-        context.error("createSignUp failed:", error);
-        return blockPageResponse("Registration couldn't be completed", "We couldn't finish setting up your account. Please try again later.");
+    if (dobKey && dob.normalized) {
+        modified[dobKey] = dob.normalized;
     }
 
-    // 3. Success — let Entra complete the sign-up.
+    // 2. Compose displayName from the collected givenName and surname. Both are
+    //    built-in attributes, so they arrive unprefixed. Only overwrite when at least
+    //    one part is present; otherwise leave Entra's default behavior untouched.
+    const givenName = asString(attributes["givenName"])?.trim();
+    const surname = asString(attributes["surname"])?.trim();
+    const displayName = [givenName, surname].filter(Boolean).join(" ");
+    if (displayName.length > 0) {
+        modified["displayName"] = displayName;
+    }
+
+    // 3. Persist any overwrites; otherwise let Entra complete the sign-up unchanged.
+    if (Object.keys(modified).length > 0) {
+        return modifyAttributeValuesResponse(modified);
+    }
     return continueResponse;
 }
 

@@ -1,0 +1,30 @@
+{
+  "type": "microsoft.graph.authenticationEvent.tokenIssuanceStart",
+  "source": "/tenants/a67366e7-9873-4a38-9bae-0a4a18952688/applications/5f0a52ca-f5db-4a6d-9b3a-3180d51fdd08",
+  "data": {
+    "@odata.type": "microsoft.graph.onTokenIssuanceStartCalloutData",
+    "tenantId": "a67366e7-9873-4a38-9bae-0a4a18952688",
+    "authenticationEventListenerId": "e900b404-03ee-4a58-8771-e5edaca3d32e",
+    "customAuthenticationExtensionId": "63d5279a-da95-40a1-80a2-fedb7f75eeef",
+    "authenticationContext": {
+      "correlationId": "cccc2222-dd33-4444-55ee-666666ffffff",
+      "client": { "ip": "127.0.0.1", "locale": "en-us", "market": "en-us" },
+      "protocol": "OAUTH2.0",
+      "clientServicePrincipal": {
+        "id": "11112222-3333-4444-5555-666677778888",
+        "appId": "5f0a52ca-f5db-4a6d-9b3a-3180d51fdd08",
+        "appDisplayName": "react-nextjs-sample",
+        "displayName": "react-nextjs-sample"
+      },
+      "user": {
+        "id": "f9762bc0-7be2-424f-a654-5937aa2e343a",
+        "displayName": "Porih Levine",
+        "givenName": "Porih",
+        "surname": "Levine",
+        "mail": "porih51153@doreact.com",
+        "userPrincipalName": "porih51153@doreact.com",
+        "userType": "Member"
+      }
+    }
+  }
+}

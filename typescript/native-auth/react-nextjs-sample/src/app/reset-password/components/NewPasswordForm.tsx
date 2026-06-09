@@ -4,6 +4,7 @@ import type { ResetNewPasswordStepProps } from "../types/formProperties";
 import { ErrorSummary, FieldError, type FormError } from "@/app/shared/components/FormErrors";
 import {
     CONFIRM_PASSWORD_GUIDE_ERROR,
+    CONFIRM_PASSWORD_MISMATCH_ERROR,
     PASSWORD_GUIDE_ERROR,
     isPasswordValid,
 } from "@/app/shared/utils/passwordValidation";
@@ -29,11 +30,14 @@ export function NewPasswordForm({
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
     const passwordInvalid = !isPasswordValid(password);
-    const confirmInvalid = confirmPassword.length === 0 || password !== confirmPassword;
+    // Distinguish "not filled in" from "doesn't match" so the message can be specific.
+    const confirmMismatch = confirmPassword.length > 0 && password !== confirmPassword;
+    const confirmInvalid = confirmPassword.length === 0 || confirmMismatch;
+    const confirmErrorMessage = confirmMismatch ? CONFIRM_PASSWORD_MISMATCH_ERROR : CONFIRM_PASSWORD_GUIDE_ERROR;
 
     const fieldErrors: Record<string, string | null> = {
         [FIELD_IDS.password]: passwordInvalid ? PASSWORD_GUIDE_ERROR : null,
-        [FIELD_IDS.confirmPassword]: confirmInvalid ? CONFIRM_PASSWORD_GUIDE_ERROR : null,
+        [FIELD_IDS.confirmPassword]: confirmInvalid ? confirmErrorMessage : null,
     };
 
     const canSubmit = Object.values(fieldErrors).every((e) => e === null);
@@ -44,7 +48,7 @@ export function NewPasswordForm({
             summaryErrors.push({ id: FIELD_IDS.password, message: PASSWORD_GUIDE_ERROR });
         }
         if (confirmInvalid) {
-            summaryErrors.push({ id: FIELD_IDS.confirmPassword, message: CONFIRM_PASSWORD_GUIDE_ERROR });
+            summaryErrors.push({ id: FIELD_IDS.confirmPassword, message: confirmErrorMessage });
         }
     }
 

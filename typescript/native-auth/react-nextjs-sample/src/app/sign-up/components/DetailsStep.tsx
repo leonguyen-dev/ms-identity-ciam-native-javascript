@@ -4,6 +4,7 @@ import type { DetailsStepProps } from "../types/formProperties";
 import { ErrorSummary, FieldError, type FormError } from "@/app/shared/components/FormErrors";
 import {
     CONFIRM_PASSWORD_GUIDE_ERROR,
+    CONFIRM_PASSWORD_MISMATCH_ERROR,
     PASSWORD_GUIDE_ERROR,
     isPasswordValid,
 } from "@/app/shared/utils/passwordValidation";
@@ -22,6 +23,7 @@ const OTHER_FIELDS_ERROR =
 
 export function DetailsStep({
     onSubmit,
+    serverErrors,
     password,
     setPassword,
     confirmPassword,
@@ -42,15 +44,20 @@ export function DetailsStep({
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
     const passwordInvalid = !isPasswordValid(password);
-    const confirmInvalid = confirmPassword.length === 0 || password !== confirmPassword;
+    // Distinguish "not filled in" from "doesn't match" so the message can be specific.
+    const confirmMismatch = confirmPassword.length > 0 && password !== confirmPassword;
+    const confirmInvalid = confirmPassword.length === 0 || confirmMismatch;
+    const confirmErrorMessage = confirmMismatch ? CONFIRM_PASSWORD_MISMATCH_ERROR : CONFIRM_PASSWORD_GUIDE_ERROR;
 
     const fieldErrors: Record<string, string | null> = {
         [FIELD_IDS.password]: passwordInvalid ? PASSWORD_GUIDE_ERROR : null,
-        [FIELD_IDS.confirmPassword]: confirmInvalid ? CONFIRM_PASSWORD_GUIDE_ERROR : null,
-        [FIELD_IDS.givenName]: givenName.trim().length === 0 ? "Please provide your given name(s)" : null,
-        [FIELD_IDS.familyName]: familyName.trim().length === 0 ? "Please provide family name" : null,
-        [FIELD_IDS.dateOfBirth]: dateOfBirth.length === 0 ? "Please provide your date of birth" : null,
-        [FIELD_IDS.terms]: !termsAccepted ? "You must agree to the terms and conditions" : null,
+        [FIELD_IDS.confirmPassword]: confirmInvalid ? confirmErrorMessage : null,
+        // Wording mirrors the server-side messages in attributeValidation.ts / cors.js so
+        // identical errors dedupe when both layers fire (see combinedErrors below).
+        [FIELD_IDS.givenName]: givenName.trim().length === 0 ? "Please provide your given name." : null,
+        [FIELD_IDS.familyName]: familyName.trim().length === 0 ? "Please provide your family name." : null,
+        [FIELD_IDS.dateOfBirth]: dateOfBirth.length === 0 ? "Please provide your date of birth." : null,
+        [FIELD_IDS.terms]: !termsAccepted ? "You must agree to the terms and conditions." : null,
     };
 
     const canSubmit = Object.values(fieldErrors).every((e) => e === null);
@@ -64,7 +71,7 @@ export function DetailsStep({
             summaryErrors.push({ id: FIELD_IDS.password, message: PASSWORD_GUIDE_ERROR });
         }
         if (confirmInvalid) {
-            summaryErrors.push({ id: FIELD_IDS.confirmPassword, message: CONFIRM_PASSWORD_GUIDE_ERROR });
+            summaryErrors.push({ id: FIELD_IDS.confirmPassword, message: confirmErrorMessage });
         }
         for (const key of OTHER_FIELD_KEYS) {
             const id = FIELD_IDS[key];
@@ -76,8 +83,27 @@ export function DetailsStep({
         }
     }
 
+    // One box for everything: client-side checks (password + presence) and the
+    // server-side /api/validate-attributes rules. In normal operation the client gate
+    // blocks submit before the server runs, so only one source is populated; we still
+    // dedupe by message in case both fire (e.g. while the client gate is bypassed).
+    const combinedErrors: FormError[] = [...summaryErrors, ...(serverErrors ?? [])].filter(
+        (err, idx, all) => all.findIndex((e) => e.message === err.message) === idx
+    );
+
     const showFieldError = (id: string): string | null =>
         submitted && fieldErrors[id] ? fieldErrors[id] : null;
+
+    // Server errors arrive keyed by the matching input id; index them so each renders
+    // inline beneath its field, just like the client-side checks. Prefer the client
+    // message when present (wording is aligned, so the two won't both show for a field).
+    const serverFieldErrorById: Record<string, string> = {};
+    for (const err of serverErrors ?? []) {
+        if (err.id) serverFieldErrorById[err.id] = err.message;
+    }
+
+    const fieldErrorFor = (id: string): string | null =>
+        showFieldError(id) ?? serverFieldErrorById[id] ?? null;
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -90,7 +116,7 @@ export function DetailsStep({
         <form onSubmit={handleSubmit} style={styles.form} noValidate>
             <h2 style={styles.stepHeading}>Enter your details (2/3)</h2>
 
-            <ErrorSummary errors={summaryErrors} />
+            <ErrorSummary errors={combinedErrors} />
 
             <label htmlFor={FIELD_IDS.password} style={styles.label}>
                 Password
@@ -168,10 +194,10 @@ export function DetailsStep({
                 value={givenName}
                 onChange={(e) => setGivenName(e.target.value)}
                 style={styles.input}
-                aria-invalid={!!showFieldError(FIELD_IDS.givenName)}
+                aria-invalid={!!fieldErrorFor(FIELD_IDS.givenName)}
             />
-            {showFieldError(FIELD_IDS.givenName) && (
-                <FieldError message={showFieldError(FIELD_IDS.givenName) as string} />
+            {fieldErrorFor(FIELD_IDS.givenName) && (
+                <FieldError message={fieldErrorFor(FIELD_IDS.givenName) as string} />
             )}
 
             <label htmlFor={FIELD_IDS.familyName} style={styles.label}>
@@ -184,10 +210,10 @@ export function DetailsStep({
                 value={familyName}
                 onChange={(e) => setFamilyName(e.target.value)}
                 style={styles.input}
-                aria-invalid={!!showFieldError(FIELD_IDS.familyName)}
+                aria-invalid={!!fieldErrorFor(FIELD_IDS.familyName)}
             />
-            {showFieldError(FIELD_IDS.familyName) && (
-                <FieldError message={showFieldError(FIELD_IDS.familyName) as string} />
+            {fieldErrorFor(FIELD_IDS.familyName) && (
+                <FieldError message={fieldErrorFor(FIELD_IDS.familyName) as string} />
             )}
 
             <label htmlFor={FIELD_IDS.dateOfBirth} style={styles.label}>
@@ -200,10 +226,10 @@ export function DetailsStep({
                 value={dateOfBirth}
                 onChange={(e) => setDateOfBirth(e.target.value)}
                 style={styles.input}
-                aria-invalid={!!showFieldError(FIELD_IDS.dateOfBirth)}
+                aria-invalid={!!fieldErrorFor(FIELD_IDS.dateOfBirth)}
             />
-            {showFieldError(FIELD_IDS.dateOfBirth) && (
-                <FieldError message={showFieldError(FIELD_IDS.dateOfBirth) as string} />
+            {fieldErrorFor(FIELD_IDS.dateOfBirth) && (
+                <FieldError message={fieldErrorFor(FIELD_IDS.dateOfBirth) as string} />
             )}
 
             <div style={styles.termsQuestion}>
@@ -218,12 +244,12 @@ export function DetailsStep({
                     type="checkbox"
                     checked={termsAccepted}
                     onChange={(e) => setTermsAccepted(e.target.checked)}
-                    aria-invalid={!!showFieldError(FIELD_IDS.terms)}
+                    aria-invalid={!!fieldErrorFor(FIELD_IDS.terms)}
                 />
                 <span>I agree to the terms and conditions</span>
             </label>
-            {showFieldError(FIELD_IDS.terms) && (
-                <FieldError message={showFieldError(FIELD_IDS.terms) as string} />
+            {fieldErrorFor(FIELD_IDS.terms) && (
+                <FieldError message={fieldErrorFor(FIELD_IDS.terms) as string} />
             )}
 
             <div style={styles.actionsRow}>
