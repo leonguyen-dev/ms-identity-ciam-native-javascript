@@ -1,6 +1,7 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import { EmailClient, type EmailMessage } from "@azure/communication-email";
 import { buildOtpEmail } from "../emailTemplate";
+import { getEmailBlockReason } from "../emailBlocklist";
 
 /**
  * Entra External ID "OnOtpSend" (emailOtpSend) custom authentication extension.
@@ -13,6 +14,20 @@ import { buildOtpEmail } from "../emailTemplate";
  * One handler covers every Email-OTP flow: sign-up verification, sign-in OTP,
  * password reset, and email MFA — they all raise this same event.
  *
+ * Email blocklist: this is also the native-auth enforcement point for the email
+ * blocklist. Native auth never fires OnAttributeCollectionStart, but it does fire
+ * OnOtpSend, and this is the earliest server hook — it runs before any code is
+ * sent. When the email is blocked we DON'T send the email and return a non-success
+ * response, which fails the OTP callout. OnOtpSend has no `showBlockPage` action,
+ * so the failure surfaces to the client as a generic error; the friendly message
+ * is shown by the React client's own pre-signUp() check.
+ *
+ * NOTE: we block on email match for ANY OTP flow, not just sign-up. The original
+ * design scoped this to requestType === "signUp", but native auth sends a
+ * different/empty requestType, so the guard let blocked sign-ups through. Blocking
+ * a blocklisted address across all flows (sign-in / reset / MFA) is the intended
+ * "banned" behaviour anyway. requestType is logged on every call for visibility.
+ *
  * Auth: protect this endpoint with the Function App's built-in Authentication
  * (Easy Auth) wired to the "Azure Functions authentication events API" app
  * registration, per the Microsoft setup guide. The `function` authLevel key is a
@@ -22,6 +37,12 @@ import { buildOtpEmail } from "../emailTemplate";
 const connectionString = process.env.COMMUNICATION_SERVICES_CONNECTION_STRING;
 const senderAddress = process.env.COMMUNICATION_SERVICES_SENDER_ADDRESS;
 const brandName = process.env.MAIL_SENDER_DISPLAY_NAME || "myServiceTas";
+
+// Build the ACS client once at module load and reuse it across warm
+// invocations. Constructing it per-call rebuilds the HTTP pipeline + auth
+// policy every time, adding avoidable latency under Entra's ~2s callout budget.
+// Undefined if the connection string is missing; the handler guards on that.
+const emailClient = connectionString ? new EmailClient(connectionString) : undefined;
 
 // Shape of the slice of the Entra payload we consume. See:
 // https://learn.microsoft.com/entra/identity-platform/custom-extension-email-otp-send-data
@@ -52,7 +73,7 @@ export async function emailOtpSend(
     request: HttpRequest,
     context: InvocationContext
 ): Promise<HttpResponseInit> {
-    if (!connectionString || !senderAddress) {
+    if (!emailClient || !senderAddress) {
         context.error("ACS settings missing: set COMMUNICATION_SERVICES_CONNECTION_STRING and COMMUNICATION_SERVICES_SENDER_ADDRESS.");
         return { status: 500, jsonBody: { error: "Email provider not configured." } };
     }
@@ -73,8 +94,24 @@ export async function emailOtpSend(
         return { status: 400, jsonBody: { error: "Missing otpContext.identifier or otpContext.oneTimeCode." } };
     }
 
+    // Diagnostic: native auth's actual requestType value for OTP isn't documented
+    // (the docs/sample show "signUp" for the browser user-flow only). Log it on
+    // every call so the real value is visible in the Function App's Log stream.
+    context.log(`OnOtpSend: requestType='${requestType}', identifier='${email}'.`);
+
+    // Email blocklist enforcement. We block on email match for ANY OTP flow rather
+    // than scoping to requestType === "signUp": native auth appears to send a
+    // different (or empty) requestType, so the signUp-only guard let blocked
+    // sign-ups through. A blocklisted address is banned outright, so blocking it
+    // across sign-in / reset / MFA too is the intended behaviour. A blocked email
+    // gets no OTP; the non-success response fails the callout.
+    const blockReason = getEmailBlockReason(email);
+    if (blockReason) {
+        context.log(`OnOtpSend: blocking '${email}' (requestType='${requestType}') — not sending OTP.`);
+        return { status: 403, jsonBody: { error: blockReason } };
+    }
+
     try {
-        const client = new EmailClient(connectionString);
         const { subject, html, plainText } = buildOtpEmail({ email, code, brandName });
         const message: EmailMessage = {
             senderAddress,
@@ -87,7 +124,7 @@ export async function emailOtpSend(
         // status (routinely several seconds) and trip CustomExtensionTimedOut.
         // beginSend resolving means ACS has accepted the message and will
         // deliver it server-side, so we don't need to poll for completion.
-        await client.beginSend(message);
+        await emailClient.beginSend(message);
         context.log(`OTP email queued (requestType=${requestType})`);
 
         return continueResponse;

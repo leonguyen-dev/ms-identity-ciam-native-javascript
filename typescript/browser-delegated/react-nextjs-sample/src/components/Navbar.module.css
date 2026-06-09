@@ -1,0 +1,57 @@
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 2rem;
+    background-color: #ffffff;
+    border-bottom: 4px solid #267151;
+    font-family: var(--font-nunito), 'Nunito', sans-serif;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    text-decoration: none;
+}
+
+.logoEmblem {
+    height: 3.25rem;
+    width: auto;
+}
+
+.logoDivider {
+    width: 1px;
+    align-self: stretch;
+    margin: 0 0;
+    background-color: #000;
+}
+
+.logoWordmark {
+    height: 3rem;
+    width: auto;
+}
+
+.links {
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+}
+
+.link {
+    text-decoration: none;
+    color: #292929;
+    font-weight: 700;
+    padding: 0.5rem 1rem;
+    transition: color 0.15s ease, background-color 0.15s ease;
+    font-family: var(--font-nunito), 'Nunito', sans-serif;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+}
+
+.link:hover {
+    background-color: #f5f5f5;
+    color: #267151;
+}

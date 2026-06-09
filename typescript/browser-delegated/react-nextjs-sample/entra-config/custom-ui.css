@@ -1,0 +1,107 @@
+/*
+ * Service Tasmania custom branding for the Entra External ID hosted user-flow pages.
+ *
+ * Upload via: Entra admin centre > Entra ID > Company branding > (default + AU
+ * locale) > Sign-in form > "Custom CSS". This styles the HOSTED sign-up / sign-in
+ * / password-reset pages that the browser-delegated app redirects to.
+ *
+ * IMPORTANT: External ID supports company branding + custom CSS only — NOT the
+ * arbitrary custom HTML/JS page templates B2C allowed at TemplateUrl. So this is a
+ * best-effort visual match, not a pixel-for-pixel reproduction of the B2C pages.
+ *
+ * The selectors below follow Microsoft's CSS template reference:
+ * https://learn.microsoft.com/entra/fundamentals/reference-company-branding-css-template
+ * Microsoft occasionally revises these class names — verify against the live page
+ * (browser dev tools) and adjust if a rule doesn't take effect. Nunito is loaded
+ * via @import; if your tenant blocks remote fonts, set the font in Company branding
+ * or fall back to the system sans-serif stack.
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap");
+
+/* ---- Palette (kept inline per selector; CSS vars are not always honoured) ---- */
+/* primary       #267151  | hover #1e5a40 | hero #098851
+   page bg       #f5f5f5  | text  #292929 | border #6b7280
+   error         #b91c1c                                                        */
+
+/* ---- Page / background ---- */
+body,
+.ext-sign-in-box,
+.ext-middle {
+  font-family: "Nunito", "Segoe UI", sans-serif !important;
+  color: #292929;
+}
+
+.ext-background-image,
+.ext-background-overlay {
+  background-color: #f5f5f5 !important;
+}
+
+/* ---- Sign-in card ---- */
+.ext-sign-in-box {
+  background-color: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  border-radius: 0 !important; /* sharp corners, matching the Service Tasmania UI */
+  border-top: 4px solid #267151 !important;
+}
+
+/* ---- Headings / text ---- */
+.ext-title,
+.ext-subtitle {
+  font-family: "Nunito", "Segoe UI", sans-serif !important;
+  font-weight: 700 !important;
+  color: #292929 !important;
+}
+
+/* ---- Inputs (sharp corners, ST border colour) ---- */
+.ext-input,
+.ext-text-box {
+  border: 1px solid #6b7280 !important;
+  border-radius: 0 !important;
+  font-family: "Nunito", "Segoe UI", sans-serif !important;
+}
+
+.ext-input:focus,
+.ext-text-box:focus {
+  outline: 2px solid #267151 !important;
+  border-color: #267151 !important;
+}
+
+/* ---- Primary button (Next / Sign in / Continue) ---- */
+.ext-button.ext-primary {
+  background-color: #267151 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  font-family: "Nunito", "Segoe UI", sans-serif !important;
+  font-weight: 800 !important;
+}
+
+.ext-button.ext-primary:hover,
+.ext-button.ext-primary:focus {
+  background-color: #1e5a40 !important;
+}
+
+/* ---- Secondary button (Cancel / Back) ---- */
+.ext-button.ext-secondary {
+  border-radius: 0 !important;
+  color: #267151 !important;
+  font-family: "Nunito", "Segoe UI", sans-serif !important;
+  font-weight: 800 !important;
+}
+
+/* ---- Links (Forgot password?, Sign up now) ---- */
+.ext-sign-in-box a {
+  color: #267151 !important;
+  font-weight: 800 !important;
+}
+
+.ext-sign-in-box a:hover {
+  color: #1e5a40 !important;
+}
+
+/* ---- Validation / error text (from showValidationError / showBlockPage) ---- */
+.ext-error,
+.ext-field-item-error {
+  color: #b91c1c !important;
+  font-weight: 600 !important;
+}
