@@ -14,7 +14,7 @@ import { getEmailBlockReason } from "../emailBlocklist";
  * One handler covers every Email-OTP flow: sign-up verification, sign-in OTP,
  * password reset, and email MFA — they all raise this same event.
  *
- * Email blocklist: this is also the native-auth enforcement point for the email
+ * Email blocklist: this is the native-auth enforcement point for the email
  * blocklist. Native auth never fires OnAttributeCollectionStart, but it does fire
  * OnOtpSend, and this is the earliest server hook — it runs before any code is
  * sent. When the email is blocked we DON'T send the email and return a non-success
@@ -22,11 +22,13 @@ import { getEmailBlockReason } from "../emailBlocklist";
  * so the failure surfaces to the client as a generic error; the friendly message
  * is shown by the React client's own pre-signUp() check.
  *
- * NOTE: we block on email match for ANY OTP flow, not just sign-up. The original
- * design scoped this to requestType === "signUp", but native auth sends a
- * different/empty requestType, so the guard let blocked sign-ups through. Blocking
- * a blocklisted address across all flows (sign-in / reset / MFA) is the intended
- * "banned" behaviour anyway. requestType is logged on every call for visibility.
+ * Browser-delegated sign-up is the exception: a generic error in the Entra-hosted
+ * UI is poor UX, and unlike native auth that flow DOES fire OnAttributeCollectionStart
+ * (which can `showBlockPage`). So when requestType === "signUp" (the browser user
+ * flow) we deliberately let the OTP send and defer the block to that event, which
+ * renders a branded message. Every other flow — native (different/empty requestType)
+ * and browser sign-in / reset / MFA — is blocked here. requestType is logged on
+ * every call for visibility.
  *
  * Auth: protect this endpoint with the Function App's built-in Authentication
  * (Easy Auth) wired to the "Azure Functions authentication events API" app
@@ -99,16 +101,29 @@ export async function emailOtpSend(
     // every call so the real value is visible in the Function App's Log stream.
     context.log(`OnOtpSend: requestType='${requestType}', identifier='${email}'.`);
 
-    // Email blocklist enforcement. We block on email match for ANY OTP flow rather
-    // than scoping to requestType === "signUp": native auth appears to send a
-    // different (or empty) requestType, so the signUp-only guard let blocked
-    // sign-ups through. A blocklisted address is banned outright, so blocking it
-    // across sign-in / reset / MFA too is the intended behaviour. A blocked email
-    // gets no OTP; the non-success response fails the callout.
+    // Email blocklist enforcement.
+    //
+    // OnOtpSend has no `showBlockPage` action, so a 403 here always renders Entra's
+    // GENERIC error in the hosted UI. To give browser-delegated sign-up a friendly,
+    // branded message, we DON'T block it here — we let the OTP send and block it one
+    // step later in OnAttributeCollectionStart, which can `showBlockPage`. That event
+    // only fires for the browser user flow's sign-up (requestType === "signUp"), so
+    // we hand that case off and block everything else here:
+    //   - native auth (sign-up/sign-in/reset/MFA): never fires attribute events, and
+    //     sends a different/empty requestType, so it's blocked here; the React client
+    //     shows its own friendly message via its pre-signUp() check.
+    //   - browser sign-in / reset / MFA: no attribute-collection step to defer to, so
+    //     a banned address is blocked here (generic error is acceptable — the account
+    //     shouldn't exist anyway).
+    // A blocked email gets no OTP; the non-success response fails the callout.
     const blockReason = getEmailBlockReason(email);
-    if (blockReason) {
+    const deferToAttributeStart = requestType.toLowerCase() === "signup";
+    if (blockReason && !deferToAttributeStart) {
         context.log(`OnOtpSend: blocking '${email}' (requestType='${requestType}') — not sending OTP.`);
         return { status: 403, jsonBody: { error: blockReason } };
+    }
+    if (blockReason) {
+        context.log(`OnOtpSend: '${email}' is blocklisted but requestType='${requestType}' (browser sign-up) — sending OTP; OnAttributeCollectionStart will block with a branded page.`);
     }
 
     try {

@@ -85,10 +85,20 @@ export async function attributeCollectionStart(
         return { status: 400, jsonBody: { error: "Invalid JSON body." } };
     }
 
-    // The verified email arrives as an "email" identity, not as an attribute.
-    const email = payload.data?.userSignUpInfo?.identities?.find(
-        (id) => id.signInType === "email"
-    )?.issuerAssignedId;
+    // The verified email arrives as an identity, not as an attribute. The exact
+    // signInType varies: the OnAttributeCollectionStart docs sample uses "email",
+    // but the objectIdentity contract uses "emailAddress" (and variants like
+    // "emailAddress1"). Match either, and fall back to any identity whose
+    // issuerAssignedId looks like an email so a signInType we didn't anticipate
+    // can't silently let a blocked address through.
+    const identities = payload.data?.userSignUpInfo?.identities ?? [];
+    const email =
+        identities.find((id) => (id.signInType ?? "").toLowerCase().startsWith("email"))?.issuerAssignedId ??
+        identities.find((id) => (id.issuerAssignedId ?? "").includes("@"))?.issuerAssignedId;
+
+    // Surface the raw identities so the real signInType is visible in the log stream
+    // if matching ever misses.
+    context.log(`OnAttributeCollectionStart: identities=${JSON.stringify(identities)}`);
 
     if (!email) {
         // No email to evaluate — don't hold up sign-up; let the flow continue.
@@ -96,6 +106,11 @@ export async function attributeCollectionStart(
         return continueResponse;
     }
 
+    // Email blocklist enforcement for the BROWSER-DELEGATED sign-up flow. OnOtpSend
+    // can't render a custom message (it has no showBlockPage action), so for the
+    // hosted user flow we let the OTP send and block here instead — `showBlockPage`
+    // surfaces a branded title + message to the user. Native auth never reaches this
+    // event, so its enforcement stays in OnOtpSend. See otp-email-function.
     const blockReason = getEmailBlockReason(email);
     if (blockReason) {
         context.log(`OnAttributeCollectionStart: blocking '${email}'.`);
