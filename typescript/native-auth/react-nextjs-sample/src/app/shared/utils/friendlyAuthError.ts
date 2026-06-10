@@ -46,3 +46,15 @@ export function friendlyAuthError(err: unknown, fallback: string): string {
 export function isContinuationTokenExpired(err: unknown): boolean {
     return /AADSTS552001/.test(getDescription(err));
 }
+
+// Detects a custom authentication extension returning a non-2xx HTTP status —
+// AADSTS1100001 with "Underlying error code: 1003002" (CustomExtensionInvalidHTTPStatus).
+// For our OnOtpSend extension this is the deliberate 403 it returns to block a
+// blocklisted email from signing up, so the caller can show a "this email can't be
+// used" message instead of a generic error. Note: a genuine 5xx from the extension
+// (e.g. ACS misconfigured) also yields 1003002, so this can't tell a block apart
+// from an extension outage — the client-side pre-signUp() blocklist is the primary,
+// precise path; this is the fallback for addresses the client list doesn't cover.
+export function isOtpSendExtensionBlock(err: unknown): boolean {
+    return /Underlying error code:\s*1003002/.test(getDescription(err));
+}
