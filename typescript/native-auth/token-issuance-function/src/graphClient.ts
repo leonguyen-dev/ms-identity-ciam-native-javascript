@@ -71,17 +71,23 @@ interface PhoneMethodsResponse {
 /**
  * Returns the user's mobile MFA phone number (E.164, e.g. "+1 2065551234"),
  * or undefined if the user has no registered phone method.
+ *
+ * `signal` aborts both the token acquisition and the Graph call. The
+ * phoneMethods endpoint routinely takes 1-2.5s — near or over Entra's whole
+ * callout budget — so the caller must bound this with a deadline and treat
+ * an abort as "no claim", or a slow Graph call fails the entire sign-in.
  */
 export async function getUserMfaPhoneNumber(
     userId: string,
-    log?: (message: string) => void
+    log?: (message: string) => void,
+    signal?: AbortSignal
 ): Promise<string | undefined> {
     // Timing breakdown helps diagnose CustomExtensionTimedOut (error 1003005):
     // Entra allows ~2s. Slow token acquisition points at a cold start (the
     // credential is rebuilt per cold instance); a slow Graph call points at a
     // downstream/network issue. Warm requests should show a cached-token hit.
     const tokenStart = Date.now();
-    const token = await getCredential().getToken(GRAPH_SCOPE);
+    const token = await getCredential().getToken(GRAPH_SCOPE, { abortSignal: signal });
     log?.(`Graph token acquired in ${Date.now() - tokenStart}ms.`);
     if (!token) {
         throw new Error("Failed to acquire a Microsoft Graph access token.");
@@ -90,7 +96,7 @@ export async function getUserMfaPhoneNumber(
     const callStart = Date.now();
     const response = await fetch(
         `${GRAPH_BASE}/users/${encodeURIComponent(userId)}/authentication/phoneMethods`,
-        { headers: { Authorization: `Bearer ${token.token}` } }
+        { headers: { Authorization: `Bearer ${token.token}` }, signal }
     );
     log?.(`Graph phoneMethods call returned ${response.status} in ${Date.now() - callStart}ms.`);
 
