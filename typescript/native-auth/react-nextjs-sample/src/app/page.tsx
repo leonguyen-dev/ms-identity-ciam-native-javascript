@@ -17,6 +17,7 @@ import {
 import { PopupRequest } from "@azure/msal-browser";
 import { useAuthClient } from "@/auth/AuthClientProvider";
 import { customAuthConfig } from "../config/auth-config";
+import { WarningIcon } from "./shared/components/FormErrors";
 import { PasswordForm } from "./shared/components/PasswordForm";
 import { CodeForm } from "./shared/components/CodeForm";
 import { VerificationCodeStep } from "./shared/components/VerificationCodeStep";
@@ -227,10 +228,84 @@ const styles = {
         fontWeight: 600,
         borderRadius: "0.25rem",
     },
+    signInError: {
+        display: "flex",
+        alignItems: "center",
+        gap: "0.5rem",
+        marginTop: "0.25rem",
+        color: "#b91c1c",
+        fontSize: "1rem",
+        fontWeight: 700,
+    },
+    signInErrorText: {
+        textDecoration: "underline",
+    },
     signedInPanel: {
         padding: "1.25rem",
         border: "0.0625rem solid #d1d5db",
         borderRadius: "0.25rem",
+    },
+    tokenSectionTitle: {
+        fontSize: "1.125rem",
+        fontWeight: 800,
+        margin: "1.5rem 0 0.75rem 0",
+        color: "#292929",
+    },
+    claimsTable: {
+        width: "100%",
+        borderCollapse: "collapse" as const,
+        fontSize: "0.9375rem",
+    },
+    claimRow: {
+        borderBottom: "0.0625rem solid #e5e7eb",
+    },
+    claimKey: {
+        padding: "0.5rem 1rem 0.5rem 0",
+        fontWeight: 700,
+        color: "#267151",
+        verticalAlign: "top" as const,
+        whiteSpace: "nowrap" as const,
+        fontFamily: "ui-monospace, 'Cascadia Code', 'Consolas', monospace",
+    },
+    claimValue: {
+        padding: "0.5rem 0",
+        color: "#292929",
+        wordBreak: "break-word" as const,
+        fontFamily: "ui-monospace, 'Cascadia Code', 'Consolas', monospace",
+    },
+    claimValueSub: {
+        color: "#6b7280",
+        fontSize: "0.8125rem",
+        marginLeft: "0.5rem",
+    },
+    rawTokenHeader: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        margin: "1.5rem 0 0.75rem 0",
+    },
+    rawToken: {
+        margin: 0,
+        padding: "1rem",
+        backgroundColor: "#1e1e1e",
+        color: "#d4d4d4",
+        borderRadius: "0.25rem",
+        fontSize: "0.8125rem",
+        lineHeight: 1.6,
+        wordBreak: "break-all" as const,
+        whiteSpace: "pre-wrap" as const,
+        fontFamily: "ui-monospace, 'Cascadia Code', 'Consolas', monospace",
+    },
+    copyButton: {
+        padding: "0.375rem 1rem",
+        backgroundColor: "#267151",
+        color: "#ffffff",
+        border: "none",
+        borderRadius: "0",
+        cursor: "pointer",
+        fontSize: "0.875rem",
+        fontWeight: 800,
+        fontFamily: "var(--font-nunito), 'Nunito', sans-serif",
     },
     sendingMsg: {
         padding: "1.25rem",
@@ -240,6 +315,10 @@ const styles = {
         textAlign: "center" as const,
     },
 } as const;
+
+// The Service Tasmania portal shows a single generic message for any credential
+// failure (wrong email or wrong password) so it never reveals which one was wrong.
+const SIGN_IN_FAILED_MESSAGE = "We can't seem to find your account.";
 
 function MailIcon() {
     return (
@@ -271,6 +350,7 @@ export default function Home() {
     const [signInState, setSignInState] = useState<AuthFlowStateBase | null>(null);
     const [isSignedIn, setIsSignedIn] = useState(false);
     const [accountData, setAccountData] = useState<CustomAuthAccountData | undefined>(undefined);
+    const [copiedToken, setCopiedToken] = useState(false);
     const [loadingAccountStatus, setLoadingAccountStatus] = useState(true);
     const [resendCountdown, setResendCountdown] = useState(0);
 
@@ -391,11 +471,11 @@ export default function Home() {
 
         if (startResult.isFailed()) {
             if (startResult.error?.isUserNotFound()) {
-                setError("User not found");
+                setError(SIGN_IN_FAILED_MESSAGE);
             } else if (startResult.error?.isInvalidUsername()) {
-                setError("Email address is invalid");
+                setError(SIGN_IN_FAILED_MESSAGE);
             } else if (startResult.error?.isPasswordIncorrect()) {
-                setError("Password is invalid");
+                setError(SIGN_IN_FAILED_MESSAGE);
             } else if (startResult.error?.isRedirectRequired()) {
                 await handleRedirectFallback();
             } else {
@@ -425,7 +505,7 @@ export default function Home() {
 
             if (passwordResult.isFailed()) {
                 if (passwordResult.error?.isInvalidPassword()) {
-                    setError("Incorrect password");
+                    setError(SIGN_IN_FAILED_MESSAGE);
                 } else {
                     handleAuthFailure(
                         passwordResult.error,
@@ -862,6 +942,13 @@ export default function Home() {
                     {loading ? "Logging in..." : "Log in"}
                 </button>
 
+                {error && (
+                    <div style={styles.signInError} role="alert">
+                        <WarningIcon />
+                        <span style={styles.signInErrorText}>{error}</span>
+                    </div>
+                )}
+
                 <Link href="/reset-password" style={styles.forgot}>
                     Forgot my password
                 </Link>
@@ -870,6 +957,36 @@ export default function Home() {
     };
 
     if (isSignedIn) {
+        const idToken = accountData?.getIdToken();
+        const claims = accountData?.getClaims();
+        // Standard JWT claims that carry Unix-epoch (seconds) timestamps.
+        const timeClaims = new Set(["exp", "iat", "nbf", "auth_time"]);
+
+        const formatClaimValue = (key: string, value: unknown) => {
+            if (timeClaims.has(key) && typeof value === "number") {
+                return (
+                    <>
+                        {value}
+                        <span style={styles.claimValueSub}>
+                            {new Date(value * 1000).toLocaleString()}
+                        </span>
+                    </>
+                );
+            }
+            if (typeof value === "object" && value !== null) {
+                return JSON.stringify(value, null, 2);
+            }
+            return String(value);
+        };
+
+        const copyToken = () => {
+            if (!idToken) return;
+            navigator.clipboard.writeText(idToken).then(() => {
+                setCopiedToken(true);
+                setTimeout(() => setCopiedToken(false), 2000);
+            });
+        };
+
         return (
             <main style={styles.page}>
                 <div style={styles.hero}>
@@ -883,6 +1000,42 @@ export default function Home() {
                             <div style={styles.signedInPanel}>
                                 {`The user '${accountData?.getAccount().username}' has signed in`}
                             </div>
+
+                            {claims && (
+                                <>
+                                    <h2 style={styles.tokenSectionTitle}>ID token claims</h2>
+                                    <table style={styles.claimsTable}>
+                                        <tbody>
+                                            {Object.entries(claims).map(([key, value]) => (
+                                                <tr key={key} style={styles.claimRow}>
+                                                    <td style={styles.claimKey}>{key}</td>
+                                                    <td style={styles.claimValue}>
+                                                        {formatClaimValue(key, value)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </>
+                            )}
+
+                            {idToken && (
+                                <>
+                                    <div style={styles.rawTokenHeader}>
+                                        <h2 style={{ ...styles.tokenSectionTitle, margin: 0 }}>
+                                            Raw ID token
+                                        </h2>
+                                        <button
+                                            type="button"
+                                            style={styles.copyButton}
+                                            onClick={copyToken}
+                                        >
+                                            {copiedToken ? "Copied!" : "Copy"}
+                                        </button>
+                                    </div>
+                                    <p style={styles.rawToken}>{idToken}</p>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -976,7 +1129,11 @@ export default function Home() {
 
                         {renderRightColumn()}
 
-                        {error && <div style={styles.error}>{error}</div>}
+                        {error &&
+                            (signInState instanceof SignInPasswordRequiredState ||
+                                signInState instanceof SignInCodeRequiredState) && (
+                                <div style={styles.error}>{error}</div>
+                            )}
                     </section>
                 </div>
             </div>
