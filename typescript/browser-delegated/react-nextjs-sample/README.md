@@ -59,8 +59,32 @@ No `cors.js` / proxy is required (that was a native-auth concern).
 ## Deploy
 
 Static export (`output: "export"`) → Azure Static Web Apps, same as the native-auth
-sample. Add the production origin as a redirect URI on the app registration first.
-See `entra-config/README.md` §6.
+sample. Unlike native-auth there is **no managed API function** — browser-delegated
+redirects go straight to `ciamlogin.com`, so there is no `--api-location`.
+
+Put the SWA deployment token in a gitignored `.env` as `SWA_CLI_DEPLOYMENT_TOKEN`,
+then from this folder:
+
+```bash
+# 1. Build the static export → out/  (staticwebapp.config.json is copied in automatically)
+npm run build
+
+# 2. Deploy out/ to the production environment
+#    (the SWA CLI reads SWA_CLI_DEPLOYMENT_TOKEN from .env)
+swa deploy ./out --env production --deployment-token "$SWA_CLI_DEPLOYMENT_TOKEN"
+```
+
+Production URL: <https://ambitious-glacier-0f4083000.7.azurestaticapps.net>
+
+**Before testing prod:** add the production origin as a redirect URI on the SPA app
+registration in Entra, or MSAL redirects fail:
+
+```text
+https://ambitious-glacier-0f4083000.7.azurestaticapps.net/
+```
+
+(SPA platform, trailing slash to match `trailingSlash: true`.) See
+`entra-config/README.md` §6.
 
 ## Mapping to the B2C policy & known gaps
 
