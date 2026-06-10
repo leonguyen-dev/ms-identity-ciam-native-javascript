@@ -58,6 +58,7 @@ function uses a client secret (local/dev); otherwise it uses the Function App's
 | `GRAPH_CLIENT_SECRET` | `<secret>` | **Local/dev only.** Leave unset in Azure to use the managed identity. |
 | `GRAPH_MANAGED_IDENTITY_CLIENT_ID` | `<mi client id>` | Azure only, and only for a **user-assigned** managed identity. Omit for system-assigned. |
 | `PHONE_CLAIM_ID` | `phoneNumber` | Claim name returned to Entra. Must match the `ID` in the claims mapping policy (case sensitive). |
+| `GRAPH_TIMEOUT_MS` | `1900` | Deadline for the Graph lookup (default 1900). Entra caps the whole callout at ~2s and the phoneMethods endpoint alone can take 1–2.5s; past the deadline the Graph call is aborted and the token is issued **without** the phone claim instead of failing the sign-in. |
 
 > Grant the Graph app role to a managed identity via Graph/PowerShell — app-role
 > assignments to managed identities aren't available in the Azure portal.
