@@ -24,6 +24,12 @@ import { getUserMfaPhoneNumber } from "../graphClient";
 // claims mapping policy exactly — the ID comparison is case sensitive.
 const phoneClaimId = process.env.PHONE_CLAIM_ID || "phoneNumber";
 
+// Deadline for the Graph lookup. Entra caps the whole callout at ~2s and the
+// phoneMethods endpoint alone routinely takes 1-2.5s, so without this bound a
+// slow Graph day fails the entire sign-in (1003005 CustomExtensionTimedOut).
+// Past the deadline we abort Graph and issue the token without the claim.
+const graphTimeoutMs = Number(process.env.GRAPH_TIMEOUT_MS) || 1900;
+
 // Shape of the slice of the Entra payload we consume. See:
 // https://learn.microsoft.com/entra/identity-platform/custom-claims-provider-reference
 interface OnTokenIssuanceStartPayload {
@@ -75,7 +81,11 @@ export async function tokenIssuanceStart(
     // the instance was cold. Entra's budget for this call is ~2s.
     const start = Date.now();
     try {
-        const phoneNumber = await getUserMfaPhoneNumber(userId, (m) => context.log(m));
+        const phoneNumber = await getUserMfaPhoneNumber(
+            userId,
+            (m) => context.log(m),
+            AbortSignal.timeout(graphTimeoutMs)
+        );
         context.log(`getUserMfaPhoneNumber total: ${Date.now() - start}ms.`);
 
         if (!phoneNumber) {
@@ -88,9 +98,17 @@ export async function tokenIssuanceStart(
         context.log("MFA phone claim added to token.");
         return claimsResponse({ [phoneClaimId]: phoneNumber });
     } catch (error) {
-        // Don't block token issuance on a Graph hiccup. Entra can also be set to
-        // fall back to the default behavior on error via the listener config.
-        context.error("Failed to read MFA phone number from Graph:", error);
+        // Don't block token issuance on a Graph hiccup or a blown deadline.
+        // Entra can also be set to fall back to the default behavior on error
+        // via the listener config.
+        if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+            context.warn(
+                `Graph lookup exceeded ${graphTimeoutMs}ms (total ${Date.now() - start}ms); ` +
+                    "issuing the token without the phone claim."
+            );
+        } else {
+            context.error("Failed to read MFA phone number from Graph:", error);
+        }
         return claimsResponse({});
     }
 }
