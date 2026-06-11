@@ -108,7 +108,41 @@ and assign it to **this SPA app's service principal**, and attach the
 emitted as `phone_number`. (Same procedure as the native-auth POC — see that
 function's README.)
 
-## 6. Deployment
+## 6. Passkeys (FIDO2)  (no B2C equivalent — External ID only)
+
+Backs the app's **/security** page and passkey sign-in on the hosted pages. See
+the sample README's "Passkeys" section for the local-dev side (hosts file, HTTPS
+cert, proxy). Docs: [Sign in with passkeys](https://learn.microsoft.com/en-us/entra/external-id/customers/how-to-sign-in-with-passkey).
+
+1. **Enable the method**: Entra ID → Security → Authentication methods →
+   Policies → **Passkey (FIDO2)** → Enable, target **All users**.
+2. **Passkey profile** (Configure tab): *Allow self-service set up* = **Yes**;
+   on the default profile select both **Synced** and **Device-bound** passkey
+   types and set *Enforce attestation* = **No** (consumer scenario; synced
+   passkeys don't support attestation).
+3. **Graph permission for the management APIs**: on the SPA app registration
+   (step 5) — or a dedicated confidential app if you prefer — add the Microsoft
+   Graph **application** permission **`UserAuthMethod-Passkey.ReadWrite.All`**
+   and **Grant admin consent**. The fido2Methods provisioning APIs are app-only;
+   there is no customer self-service (delegated) permission yet, which is why the
+   sample runs them behind `passkey-proxy.mjs` instead of from the browser.
+4. **Client secret**: app registration → Certificates & secrets → new secret →
+   put it in the sample's `.env.local` as `PASSKEY_CLIENT_SECRET` (never in
+   code; the proxy reads it server-side only).
+5. **Dev redirect URI**: add `https://auth.myservicetasdevpoc.ciamlogin.com:3000/`
+   to the SPA platform's redirect URIs (the local passkey-registration origin).
+6. **MFA prerequisite**: users must complete MFA before registering a passkey —
+   already satisfied by the Require-MFA CA policy (step 4 above). The app
+   requests an `ngcmfa` claims challenge for add/delete, so Entra re-prompts for
+   MFA when the last one is older than ~10–15 minutes.
+
+> Constraints (current External ID support): local **email + password** accounts
+> only (no social/OTP-only users); registration requires a WebAuthn-capable
+> browser; **native auth doesn't support passkeys** — this is browser-delegated
+> only. Production needs a **custom URL domain** as the relying party; the
+> `auth.<tenant>.ciamlogin.com` hosts-file trick is dev/test only.
+
+## 7. Deployment
 
 - The SPA is a static export → deploy to **Azure Static Web Apps** (sibling to the
   native-auth SWA). No managed API function is needed — browser-delegated redirects

@@ -52,9 +52,14 @@ export default function Navbar() {
                     </>
                 )}
                 {isAuthenticated && (
-                    <button className={styles.link} onClick={handleSignOut} disabled={busy}>
-                        Sign Out
-                    </button>
+                    <>
+                        <Link href="/security" className={styles.link}>
+                            Security
+                        </Link>
+                        <button className={styles.link} onClick={handleSignOut} disabled={busy}>
+                            Sign Out
+                        </button>
+                    </>
                 )}
             </div>
         </nav>

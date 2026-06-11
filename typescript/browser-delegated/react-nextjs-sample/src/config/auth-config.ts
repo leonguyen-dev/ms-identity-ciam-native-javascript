@@ -111,3 +111,38 @@ export const signUpRequest: RedirectRequest = {
 };
 
 export const logoutRequest: EndSessionRequest = {};
+
+/* ------------------------------------------------------------------------- *
+ * Passkeys (FIDO2)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Base URL of the local passkey proxy (passkey-proxy.mjs). The Microsoft Graph
+ * fido2Methods provisioning APIs need an app-only token (there is no delegated
+ * self-service permission for external-tenant customers yet), so the proxy holds
+ * the client secret + Graph token server-side and the SPA never sees them.
+ */
+export const passkeyApiBase = "http://localhost:3001/api";
+
+/**
+ * The relying-party id passkeys are registered against (creationOptions.rp.id).
+ * WebAuthn only allows registration from this domain or a subdomain of it, which
+ * is why local passkey registration is served at
+ * https://auth.myservicetasdevpoc.ciamlogin.com:3000 (see README "Passkeys").
+ * Sign-in with a passkey is unaffected — it happens on the Entra-hosted pages,
+ * which already live on this domain.
+ */
+export const passkeyRpId = `${TENANT_SUBDOMAIN}.ciamlogin.com`;
+
+/**
+ * Claims challenge demanding fresh MFA ("ngcmfa" = next-gen-credential MFA).
+ * Passkey add/delete token requests carry this so Entra only issues the token if
+ * the user completed MFA recently (otherwise the request fails with
+ * invalid_grant / interaction_required and the app redirects for MFA). Because
+ * claims-based caching is disabled by default, MSAL always goes to the network
+ * for these requests, so the freshness check is enforced on every operation.
+ */
+export const ngcmfaClaims = JSON.stringify({
+    id_token: { amr: { essential: true, values: ["ngcmfa"] } },
+    access_token: { amr: { essential: true, values: ["ngcmfa"] } },
+});

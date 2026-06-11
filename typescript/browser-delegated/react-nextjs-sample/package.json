@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "dev:passkey": "next dev --turbopack --experimental-https --experimental-https-key ./certs/auth-key.pem --experimental-https-cert ./certs/auth-cert.pem",
+    "passkey-proxy": "node passkey-proxy.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint ."
