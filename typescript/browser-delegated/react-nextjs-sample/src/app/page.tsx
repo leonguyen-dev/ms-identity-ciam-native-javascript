@@ -190,6 +190,10 @@ function SignedInView() {
                             {`The user '${account?.username ?? "unknown"}' has signed in`}
                         </div>
 
+                        <Link href="/account" style={{ ...styles.primaryButton, marginTop: "1.5rem" }}>
+                            Manage my account
+                        </Link>
+
                         {claims && (
                             <>
                                 <h2 style={styles.tokenSectionTitle}>ID token claims</h2>

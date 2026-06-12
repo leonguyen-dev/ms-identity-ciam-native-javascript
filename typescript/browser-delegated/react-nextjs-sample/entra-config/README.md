@@ -108,6 +108,38 @@ and assign it to **this SPA app's service principal**, and attach the
 emitted as `phone_number`. (Same procedure as the native-auth POC — see that
 function's README.)
 
+### App-only Graph access (for the "My account" self-service page)
+
+The optional `/account` page changes the sign-in email and mobile number via
+Microsoft Graph through the local `account-proxy.mjs`. Those Graph APIs only accept
+**application** permissions (no delegated self-service exists for external-tenant
+customers), so on **this same SPA app registration**:
+
+- API permissions → add **Microsoft Graph → Application permissions**:
+  - `User.Read.All` — read the user object + `identities[]` for the summary.
+  - `User.ManageIdentities.All` — **required** to PATCH `identities[]` (change
+    sign-in email). `User.ReadWrite.All` is *not* sufficient for the `identities`
+    property specifically — without `User.ManageIdentities.All` the PATCH returns
+    **403 Forbidden**.
+  - `UserAuthenticationMethod.ReadWrite.All` — read/update phone methods **and**
+    the email one-time-passcode method (synced when the sign-in email changes).
+  - `User-Mail.ReadWrite.All` (or `User.ReadWrite.All`) — to also sync the `mail`/
+    `otherMails` profile email when the sign-in email changes (drives the token's
+    email claim). Optional: without it, the sign-in identity + OTP method still
+    update and the proxy reports `mail` as not synced.
+
+(The page's **Change password** button uses the Entra-hosted SSPR flow, not Graph —
+Graph's `resetPassword` API doesn't support app-only access and can't act on a
+user's own account, so no Graph permission is needed for it.)
+- **Grant admin consent** for both.
+- Certificates & secrets → **New client secret**. The proxy uses this for the
+  client-credentials flow; the browser never sees it. Put the value in a gitignored
+  `.env.local` as `ACCOUNT_CLIENT_SECRET` (see the app README's "My account" section).
+
+> The SPA stays a public client for sign-in; the secret is only used server-side by
+> the proxy. For production, move the proxy logic into an Azure Function and store
+> the secret in Key Vault (or use a managed identity with these app roles).
+
 ## 6. Deployment
 
 - The SPA is a static export → deploy to **Azure Static Web Apps** (sibling to the
