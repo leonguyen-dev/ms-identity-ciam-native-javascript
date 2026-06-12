@@ -20,9 +20,11 @@
  * Every request must carry the signed-in user's ID token as a Bearer token. It
  * is verified against the tenant's JWKS (signature, issuer, audience, tenant,
  * expiry) and the Graph user id is taken from its `oid` claim — so a caller can
- * only ever manage their own account. The three mutating endpoints additionally
- * require the token to be freshly issued (the SPA requests it with an `ngcmfa`
- * claims challenge, so a fresh `iat` implies recent MFA).
+ * only ever manage their own account. MFA freshness for the mutating endpoints
+ * is enforced by the SPA's `ngcmfa` claims challenge — Entra won't issue that
+ * token silently without recent MFA, forcing an interactive redirect. The proxy
+ * backstops it by requiring a freshly-issued token (CIAM tokens carry no
+ * amr/auth_time claim for the proxy to re-verify MFA from independently).
  *
  * Graph app-role permissions the app registration needs (admin-consented):
  *   - User.ReadWrite.All                  (read user + sync mail/otherMails after a
@@ -42,10 +44,6 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import crypto from "node:crypto";
-
-const TENANT_SUBDOMAIN = "myservicetasdevpoc";
-const TENANT_ID = "a67366e7-9873-4a38-9bae-0a4a18952688";
-const CLIENT_ID = "5f0a52ca-f5db-4a6d-9b3a-3180d51fdd08";
 
 const PORT = 3001;
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -69,13 +67,29 @@ function loadEnvLocal() {
     const envPath = path.join(process.cwd(), ".env.local");
     if (!fs.existsSync(envPath)) return;
     for (const line of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
-        const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-        if (match && !(match[1] in process.env)) {
-            process.env[match[1]] = match[2].replace(/^["']|["']$/g, "");
+        const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+        if (!match || match[1] in process.env) continue;
+        let value = match[2].trim();
+        const quote = value[0];
+        if ((quote === '"' || quote === "'") && value.endsWith(quote) && value.length >= 2) {
+            value = value.slice(1, -1);
+        } else {
+            // Unquoted: strip inline comments and any trailing whitespace — a
+            // secret pasted with a stray trailing space otherwise fails the
+            // client-credentials flow with an opaque AADSTS7000215.
+            value = value.replace(/\s+#.*$/, "").trim();
         }
+        process.env[match[1]] = value;
     }
 }
 loadEnvLocal();
+
+// Tenant/app coordinates — these MUST match src/config/auth-config.ts (the
+// proxy rejects tokens whose aud/tid differ). If you retarget the sample,
+// either update both files or override these in .env.local.
+const TENANT_SUBDOMAIN = process.env.ACCOUNT_TENANT_SUBDOMAIN ?? "myservicetasdevpoc";
+const TENANT_ID = process.env.ACCOUNT_TENANT_ID ?? "a67366e7-9873-4a38-9bae-0a4a18952688";
+const CLIENT_ID = process.env.ACCOUNT_CLIENT_ID ?? "5f0a52ca-f5db-4a6d-9b3a-3180d51fdd08";
 
 const CLIENT_SECRET = process.env.ACCOUNT_CLIENT_SECRET;
 if (!CLIENT_SECRET) {
@@ -95,8 +109,21 @@ async function getOidcMetadata(forceKeyRefresh = false) {
         return oidcMetadata;
     }
     const configUrl = `https://${TENANT_SUBDOMAIN}.ciamlogin.com/${TENANT_ID}/v2.0/.well-known/openid-configuration`;
-    const config = await (await fetch(configUrl)).json();
-    const jwks = await (await fetch(config.jwks_uri)).json();
+    // Throw (rather than cache garbage for an hour) when the IdP answers with an
+    // error — a throttling/error body parses as JSON just fine otherwise.
+    const configResponse = await fetch(configUrl);
+    if (!configResponse.ok) {
+        throw new HttpError(502, `Could not fetch OIDC metadata (HTTP ${configResponse.status}).`);
+    }
+    const config = await configResponse.json();
+    if (!config.issuer || !config.jwks_uri) {
+        throw new HttpError(502, "OIDC metadata is missing issuer/jwks_uri.");
+    }
+    const jwksResponse = await fetch(config.jwks_uri);
+    if (!jwksResponse.ok) {
+        throw new HttpError(502, `Could not fetch tenant JWKS (HTTP ${jwksResponse.status}).`);
+    }
+    const jwks = await jwksResponse.json();
     oidcMetadata = {
         issuer: config.issuer,
         jwksUri: config.jwks_uri,
@@ -107,9 +134,10 @@ async function getOidcMetadata(forceKeyRefresh = false) {
 }
 
 class HttpError extends Error {
-    constructor(status, message) {
+    constructor(status, message, code) {
         super(message);
         this.status = status;
+        this.code = code; // machine-readable hint for the SPA (e.g. "mfa_required")
     }
 }
 
@@ -159,17 +187,38 @@ async function verifyUserToken(req) {
     return payload;
 }
 
+// amr values that indicate a second factor (the docs' "Supported amr claims"
+// list, plus the ngcmfa/mfa markers). Only consulted when a token actually
+// carries amr — Entra External ID CIAM tokens usually don't (see below).
+const MFA_AMR_VALUES = [
+    "ngcmfa", "mfa", "otp", "sms", "tel", "fido",
+    "face", "fpt", "iris", "retina", "sc", "pop", "hwk",
+];
+
 function requireFreshMfa(payload) {
     const now = Math.floor(Date.now() / 1000);
     const freshEnough = (payload.iat ?? 0) >= now - FRESH_MFA_MAX_AGE_SECONDS;
-    // The SPA requests this token with an ngcmfa claims challenge, so when amr
-    // is present it should record the MFA. iat freshness is the backstop either
-    // way (v2.0 tokens don't always emit amr).
-    const amrOk = !Array.isArray(payload.amr) || payload.amr.includes("ngcmfa");
+
+    // What actually enforces MFA is the SPA's `ngcmfa` claims challenge: Entra
+    // refuses to issue this token silently unless the user completed MFA
+    // recently, forcing an interactive redirect. The proxy can only backstop
+    // that — and Entra External ID's CIAM tokens carry NO amr / auth_time / acr
+    // claim to independently re-verify it from (confirmed empirically on this
+    // tenant). So:
+    //   - amr absent (the normal CIAM case): rely on iat freshness + the
+    //     client-side challenge having forced MFA at issuance.
+    //   - amr present: it must name a second factor, otherwise we can prove the
+    //     token did NOT go through MFA and reject it. (Defense in depth, in case
+    //     an optional-claims config later starts emitting amr.)
+    const amrOk =
+        !Array.isArray(payload.amr) ||
+        payload.amr.some((m) => MFA_AMR_VALUES.includes(m));
+
     if (!freshEnough || !amrOk) {
         throw new HttpError(
             401,
-            "Recent multi-factor authentication required. Re-authenticate and try again."
+            "Recent multi-factor authentication required. Re-authenticate and try again.",
+            "mfa_required"
         );
     }
 }
@@ -271,15 +320,22 @@ function resolveSignInEmail(userJson) {
 }
 
 /** Read the user's current sign-in email (and username, if any) + mobile number. */
-async function getAccountSummary(oid) {
-    const user = await callGraph("GET", `/users/${oid}?$select=${USER_SELECT}`, undefined, GRAPH_BETA);
+async function getAccountSummary(oid, tokenEmail) {
+    // The two reads are independent — issue them concurrently.
+    const [user, phones] = await Promise.all([
+        callGraph("GET", `/users/${oid}?$select=${USER_SELECT}`, undefined, GRAPH_BETA),
+        callGraph("GET", `/users/${oid}/authentication/phoneMethods`),
+    ]);
     assertGraphOk(user, "Could not read your account details.");
-    console.log("  user (beta):", JSON.stringify(user.json));
-    const signIn = resolveSignInEmail(user.json);
-    const usernameIdentity = (user.json?.identities ?? []).find((i) => i.signInType === "userName");
-
-    const phones = await callGraph("GET", `/users/${oid}/authentication/phoneMethods`);
     assertGraphOk(phones, "Could not read your phone number.");
+
+    // Use the unmasked identities so the summary reflects the real sign-in email
+    // (the direct read can be masked, and `mail` may be stale if a previous
+    // change's best-effort mail sync failed).
+    const identities = await getRealIdentities(oid, user.json, tokenEmail);
+    const signIn = resolveSignInEmail({ ...user.json, identities });
+    const usernameIdentity = identities.find((i) => i.signInType === "userName");
+
     const methods = phones.json?.value ?? [];
     const mobile = methods.find((m) => m.phoneType === "mobile") ?? methods[0];
 
@@ -296,27 +352,34 @@ async function getAccountSummary(oid) {
  * for External ID CIAM accounts even when an emailAddress identity exists —
  * $select masks it. A $filter on identities is evaluated against the real value
  * and bypasses that masking, so when the direct read looks empty we re-fetch via
- * a $filter on the current mail.
+ * a $filter probe. Probes try the profile `mail` first, then the email claim
+ * from the caller's verified ID token, then otherMails — `mail` is often null
+ * until this proxy's own mail sync has run once, so the token claim is what
+ * rescues fresh sign-ups.
  */
-async function getRealIdentities(oid, userJson) {
+async function getRealIdentities(oid, userJson, tokenEmail) {
     const direct = userJson?.identities ?? [];
     if (direct.some((i) => i.signInType === "emailAddress")) return direct;
 
-    const probeEmail = userJson?.mail;
-    if (!probeEmail) return direct;
-    const escaped = String(probeEmail).replace(/'/g, "''");
-    const probe = await callGraph(
-        "GET",
-        `/users?$select=id,identities&$filter=${encodeURIComponent(
-            `identities/any(c:c/issuerAssignedId eq '${escaped}')`
-        )}`,
-        undefined,
-        GRAPH_BETA
-    );
-    console.log(`  identities $filter probe -> ${probe.status}:`, probe.body);
-    if (probe.ok) {
-        const match = (probe.json?.value ?? []).find((u) => u.id === oid) ?? probe.json?.value?.[0];
-        if (match?.identities?.length) return match.identities;
+    const probeEmails = [...new Set(
+        [userJson?.mail, tokenEmail, ...(userJson?.otherMails ?? [])]
+            .filter((e) => typeof e === "string" && e.includes("@"))
+    )];
+    for (const probeEmail of probeEmails) {
+        const escaped = String(probeEmail).replace(/'/g, "''");
+        const probe = await callGraph(
+            "GET",
+            `/users?$select=id,identities&$filter=${encodeURIComponent(
+                `identities/any(c:c/issuerAssignedId eq '${escaped}')`
+            )}`,
+            undefined,
+            GRAPH_BETA
+        );
+        console.log(`  identities $filter probe -> ${probe.status}`);
+        if (probe.ok) {
+            const match = (probe.json?.value ?? []).find((u) => u.id === oid);
+            if (match?.identities?.length) return match.identities;
+        }
     }
     return direct;
 }
@@ -329,12 +392,11 @@ async function getRealIdentities(oid, userJson) {
  * to report. NOTE: the literal userPrincipalName stays a *.onmicrosoft.com GUID
  * — it can't become an unverified-domain email, so it is intentionally untouched.
  */
-async function changeSignInName(oid, newEmail) {
+async function changeSignInName(oid, newEmail, tokenEmail) {
     const user = await callGraph("GET", `/users/${oid}?$select=${USER_SELECT}`, undefined, GRAPH_BETA);
     assertGraphOk(user, "Could not read your current sign-in details.");
-    console.log("  user (beta):", JSON.stringify(user.json));
 
-    const identities = await getRealIdentities(oid, user.json);
+    const identities = await getRealIdentities(oid, user.json, tokenEmail);
     const emailIdx = identities.findIndex(
         (i) =>
             i.signInType === "emailAddress" ||
@@ -438,8 +500,12 @@ const PHONE_RE = /^\+[0-9][0-9\s]{6,17}$/;
 
 /* -------------------------------- server ---------------------------------- */
 
+// Pin CORS to the dev SPA rather than `*` — this proxy wields app-only Graph
+// permissions, so don't let arbitrary pages in the browser talk to it.
+const SPA_ORIGIN = process.env.ACCOUNT_ALLOWED_ORIGIN ?? "http://localhost:3000";
+
 const CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": SPA_ORIGIN,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
@@ -485,8 +551,14 @@ http.createServer(async (req, res) => {
         const user = await verifyUserToken(req);
         const oid = user.oid;
 
+        // Email claim from the verified token — used as a probe value when the
+        // app-only read masks identities[] (see getRealIdentities).
+        const tokenEmail = [user.email, user.preferred_username].find(
+            (e) => typeof e === "string" && e.includes("@")
+        );
+
         if (route === "GET /api/account") {
-            const summary = await getAccountSummary(oid);
+            const summary = await getAccountSummary(oid, tokenEmail);
             sendJson(res, 200, summary);
         } else if (route === "POST /api/account/signin-name") {
             requireFreshMfa(user);
@@ -495,7 +567,7 @@ http.createServer(async (req, res) => {
             if (!EMAIL_RE.test(email)) {
                 throw new HttpError(400, "Enter a valid email address.");
             }
-            const { synced, warnings } = await changeSignInName(oid, email);
+            const { synced, warnings } = await changeSignInName(oid, email, tokenEmail);
             let message = `Sign-in email changed to ${email} (updated: ${synced.join(", ")}). Sign out and back in to refresh your token.`;
             if (warnings.length) {
                 message += ` Note: ${warnings.join("; ")}`;
@@ -519,9 +591,10 @@ http.createServer(async (req, res) => {
     } catch (error) {
         const status = error instanceof HttpError ? error.status : 500;
         if (status === 500) console.error(error);
-        sendJson(res, status, { error: { message: error.message } });
+        sendJson(res, status, { error: { message: error.message, code: error.code } });
     }
-}).listen(PORT, () => {
-    console.log(`Account proxy listening on http://localhost:${PORT}`);
+    // Loopback only — never expose an app-only Graph credential to the LAN.
+}).listen(PORT, "127.0.0.1", () => {
+    console.log(`Account proxy listening on http://localhost:${PORT} (CORS origin: ${SPA_ORIGIN})`);
     console.log(`Graph user scope: tenant ${TENANT_SUBDOMAIN} (${TENANT_ID})`);
 });

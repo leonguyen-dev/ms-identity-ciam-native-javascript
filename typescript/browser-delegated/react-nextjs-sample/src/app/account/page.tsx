@@ -14,6 +14,7 @@ import {
 import Link from "next/link";
 import { loginRequest, ngcmfaClaims } from "@/config/auth-config";
 import {
+    AccountApiError,
     AccountSummary,
     changePhone,
     changeSignInName,
@@ -98,14 +99,16 @@ type ChangeKey = "signin" | "phone";
 
 const PENDING_ACTION_KEY = "accountPendingAction";
 
-// A change just made via Graph can take a moment to read back, so re-fetch the
-// summary after a short delay following a successful save.
-const GRAPH_PROPAGATION_DELAY_MS = 1500;
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+// One MFA redirect per save attempt. If the user cancels/abandons the hosted
+// MFA page, the resumed attempt fails the silent request again — without this
+// cap it would immediately redirect again, looping forever.
+const MAX_MFA_REDIRECTS = 1;
 
 interface PendingAction {
     action: ChangeKey;
     value: string;
+    /** How many MFA redirects this save attempt has already been through. */
+    attempts?: number;
 }
 
 function bannerStyle(kind: NonNullable<Banner>["kind"]) {
@@ -139,6 +142,26 @@ function AccountManager() {
         return result.idToken;
     }, [instance, getAccount]);
 
+    /** Stash the attempted action (counting this redirect) and bounce through MFA. */
+    const redirectForMfa = useCallback(
+        async (pending: PendingAction) => {
+            sessionStorage.setItem(
+                PENDING_ACTION_KEY,
+                JSON.stringify({ ...pending, attempts: (pending.attempts ?? 0) + 1 })
+            );
+            setBanner({
+                kind: "info",
+                text: "To keep your account secure, you need to verify your identity (multi-factor authentication). Redirecting…",
+            });
+            await instance.acquireTokenRedirect({
+                scopes: loginRequest.scopes,
+                claims: ngcmfaClaims,
+                account: getAccount(),
+            });
+        },
+        [instance, getAccount]
+    );
+
     /**
      * Token carrying the ngcmfa claims challenge for a change. If the user's MFA
      * isn't fresh enough, Entra refuses the silent request; we stash the
@@ -147,13 +170,12 @@ function AccountManager() {
      */
     const getFreshMfaToken = useCallback(
         async (pending: PendingAction): Promise<string | null> => {
-            const request = {
-                scopes: loginRequest.scopes,
-                claims: ngcmfaClaims,
-                account: getAccount(),
-            };
             try {
-                const result = await instance.acquireTokenSilent(request);
+                const result = await instance.acquireTokenSilent({
+                    scopes: loginRequest.scopes,
+                    claims: ngcmfaClaims,
+                    account: getAccount(),
+                });
                 return result.idToken;
             } catch (error) {
                 const needsInteraction =
@@ -161,16 +183,18 @@ function AccountManager() {
                     (error instanceof AuthError && error.errorCode === "invalid_grant");
                 if (!needsInteraction) throw error;
 
-                sessionStorage.setItem(PENDING_ACTION_KEY, JSON.stringify(pending));
-                setBanner({
-                    kind: "info",
-                    text: "To keep your account secure, you need to verify your identity (multi-factor authentication). Redirecting…",
-                });
-                await instance.acquireTokenRedirect(request);
+                if ((pending.attempts ?? 0) >= MAX_MFA_REDIRECTS) {
+                    // Already bounced through MFA for this save (the user likely
+                    // cancelled it) — fail with a message instead of looping.
+                    throw new Error(
+                        "Identity verification wasn't completed. Select Save to try again."
+                    );
+                }
+                await redirectForMfa(pending);
                 return null; // navigation takes over
             }
         },
-        [instance, getAccount]
+        [instance, getAccount, redirectForMfa]
     );
 
     const loadSummary = useCallback(async () => {
@@ -186,11 +210,11 @@ function AccountManager() {
     }, [getListToken]);
 
     const performChange = useCallback(
-        async (action: ChangeKey, value: string) => {
+        async (action: ChangeKey, value: string, attempts = 0) => {
             setBusy(true);
             setBanner(null);
             try {
-                const token = await getFreshMfaToken({ action, value });
+                const token = await getFreshMfaToken({ action, value, attempts });
                 if (!token) return; // redirecting for MFA
 
                 const message =
@@ -202,15 +226,34 @@ function AccountManager() {
                 setOpen(null);
                 setEmail("");
                 setPhone("");
-                await sleep(GRAPH_PROPAGATION_DELAY_MS);
-                await loadSummary();
+                // The saved value is authoritative from the 200 response — show
+                // it directly rather than re-reading Graph, which can lag the
+                // write by a few seconds.
+                setSummary((prev) =>
+                    prev === null
+                        ? prev
+                        : action === "signin"
+                          ? { ...prev, email: value }
+                          : { ...prev, phoneNumber: value }
+                );
             } catch (error) {
+                if (
+                    error instanceof AccountApiError &&
+                    error.code === "mfa_required" &&
+                    attempts < MAX_MFA_REDIRECTS
+                ) {
+                    // The proxy judged our token's MFA not fresh enough even
+                    // though MSAL had one cached — same remedy as a refused
+                    // silent request: bounce through interactive MFA.
+                    await redirectForMfa({ action, value, attempts });
+                    return;
+                }
                 setBanner({ kind: "error", text: `Could not save the change: ${(error as Error).message}` });
             } finally {
                 setBusy(false);
             }
         },
-        [getFreshMfaToken, loadSummary]
+        [getFreshMfaToken, redirectForMfa]
     );
 
     // Initial load + resume an action interrupted by the MFA redirect.
@@ -222,7 +265,9 @@ function AccountManager() {
             sessionStorage.removeItem(PENDING_ACTION_KEY);
             try {
                 const pending = JSON.parse(stored) as PendingAction;
-                void loadSummary().then(() => performChange(pending.action, pending.value));
+                void loadSummary().then(() =>
+                    performChange(pending.action, pending.value, pending.attempts ?? 0)
+                );
                 return;
             } catch {
                 // fall through to a plain load

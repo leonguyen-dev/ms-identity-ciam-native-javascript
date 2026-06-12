@@ -26,6 +26,14 @@ export interface AccountSummary {
     phoneNumber: string | null;
 }
 
+/** Error from the proxy, carrying its machine-readable code (e.g. "mfa_required"). */
+export class AccountApiError extends Error {
+    constructor(message: string, public readonly code?: string) {
+        super(message);
+        this.name = "AccountApiError";
+    }
+}
+
 async function callAccountApi(
     path: string,
     bearerToken: string,
@@ -56,7 +64,10 @@ async function callAccountApi(
 
     if (!response.ok) {
         const err = body as { error?: { message?: string; code?: string } } | undefined;
-        throw new Error(err?.error?.message ?? err?.error?.code ?? `HTTP ${response.status}`);
+        throw new AccountApiError(
+            err?.error?.message ?? err?.error?.code ?? `HTTP ${response.status}`,
+            err?.error?.code
+        );
     }
     return body;
 }
