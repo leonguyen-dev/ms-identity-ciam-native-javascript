@@ -131,7 +131,7 @@ customers), so on **this same SPA app registration**:
 (The page's **Change password** button uses the Entra-hosted SSPR flow, not Graph —
 Graph's `resetPassword` API doesn't support app-only access and can't act on a
 user's own account, so no Graph permission is needed for it.)
-- **Grant admin consent** for both.
+- **Grant admin consent** for all of them.
 - Certificates & secrets → **New client secret**. The proxy uses this for the
   client-credentials flow; the browser never sees it. Put the value in a gitignored
   `.env.local` as `ACCOUNT_CLIENT_SECRET` (see the app README's "My account" section).

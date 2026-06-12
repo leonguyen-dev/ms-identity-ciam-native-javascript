@@ -114,9 +114,11 @@ challenge and redirects for MFA if it isn't recent), so a user can only ever cha
 **To run it:**
 
 1. On the SPA app registration, add the **application** Graph permissions
-   `User.ReadWrite.All` and `UserAuthenticationMethod.ReadWrite.All` and grant
-   admin consent. Add a **client secret** (this turns the SPA's app registration
-   into a confidential client for the proxy only — the browser never uses it).
+   `User.ReadWrite.All`, `User.ManageIdentities.All` (required for the identities
+   PATCH — see the gotchas above) and `UserAuthenticationMethod.ReadWrite.All`,
+   and grant admin consent. Add a **client secret** (this turns the SPA's app
+   registration into a confidential client for the proxy only — the browser never
+   uses it).
 2. Put the secret in a gitignored `.env.local` in this folder:
    ```bash
    ACCOUNT_CLIENT_SECRET=<the client secret value>
@@ -126,8 +128,11 @@ challenge and redirects for MFA if it isn't recent), so a user can only ever cha
    npm run account-proxy
    ```
 
-For production, host the same logic in an Azure Function behind the Static Web App
-and keep the secret in Key Vault (or use a managed identity).
+The **My Account** entry points only show on `localhost` by default — the deployed
+static export has no proxy to talk to. For production, host the same logic in an
+Azure Function behind the Static Web App, keep the secret in Key Vault (or use a
+managed identity), and point the SPA at it by setting `NEXT_PUBLIC_ACCOUNT_API_BASE`
+at build time.
 
 ## Deploy
 
