@@ -2,15 +2,27 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import { useEffect, useState } from "react";
 import { useMsal, useIsAuthenticated } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
-import { loginRequest, signUpRequest, logoutRequest } from "@/config/auth-config";
+import {
+    accountFeatureAvailable,
+    loginRequest,
+    signUpRequest,
+    logoutRequest,
+} from "@/config/auth-config";
 import styles from "./Navbar.module.css";
 
 export default function Navbar() {
     const { instance, inProgress } = useMsal();
     const isAuthenticated = useIsAuthenticated();
     const busy = inProgress !== InteractionStatus.None;
+
+    // Resolved in an effect (not during render) so the static-export prerender
+    // and the first client render agree; flips to true on localhost or when an
+    // account API base is configured.
+    const [accountAvailable, setAccountAvailable] = useState(false);
+    useEffect(() => setAccountAvailable(accountFeatureAvailable()), []);
 
     const handleSignIn = () => instance.loginRedirect(loginRequest);
     const handleSignUp = () => instance.loginRedirect(signUpRequest);
@@ -53,9 +65,11 @@ export default function Navbar() {
                 )}
                 {isAuthenticated && (
                     <>
-                        <Link href="/account" className={styles.link}>
-                            My Account
-                        </Link>
+                        {accountAvailable && (
+                            <Link href="/account" className={styles.link}>
+                                My Account
+                            </Link>
+                        )}
                         <button className={styles.link} onClick={handleSignOut} disabled={busy}>
                             Sign Out
                         </button>

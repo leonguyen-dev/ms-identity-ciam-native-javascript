@@ -117,8 +117,9 @@ export const logoutRequest: EndSessionRequest = {};
  * ------------------------------------------------------------------------- */
 
 /**
- * Base URL of the local account proxy (account-proxy.mjs). The Microsoft Graph
- * APIs that change a password, a sign-in identity, or a phone authentication
+ * Base URL of the account proxy (account-proxy.mjs locally; an Azure Function
+ * in production via NEXT_PUBLIC_ACCOUNT_API_BASE, inlined at build time). The
+ * Microsoft Graph APIs that change a sign-in identity or a phone authentication
  * method all need an APP-ONLY token (there is no delegated self-service
  * permission for external-tenant customers), so the proxy holds the client
  * secret + Graph token server-side and the SPA never sees them. The SPA only
@@ -126,7 +127,21 @@ export const logoutRequest: EndSessionRequest = {};
  * the Graph user id from its `oid`, so a caller can only manage their own
  * account.
  */
-export const accountApiBase = "http://localhost:3001/api";
+export const accountApiBase =
+    process.env.NEXT_PUBLIC_ACCOUNT_API_BASE ?? "http://localhost:3001/api";
+
+/**
+ * Whether the account self-service feature can work where the app is running.
+ * The default API base is the local proxy, which only exists in dev — on a
+ * deployed site without NEXT_PUBLIC_ACCOUNT_API_BASE the links would dead-end
+ * in "could not reach the proxy", so the UI hides them instead. Call from an
+ * effect (not during render) to avoid hydration mismatches with the static
+ * export.
+ */
+export function accountFeatureAvailable(): boolean {
+    if (process.env.NEXT_PUBLIC_ACCOUNT_API_BASE) return true;
+    return typeof window !== "undefined" && window.location.hostname === "localhost";
+}
 
 /**
  * Claims challenge demanding fresh MFA ("ngcmfa" = next-gen-credential MFA).

@@ -8,7 +8,7 @@ import {
     useMsal,
 } from "@azure/msal-react";
 import { InteractionRequiredAuthError, InteractionStatus } from "@azure/msal-browser";
-import { loginRequest, signUpRequest } from "@/config/auth-config";
+import { accountFeatureAvailable, loginRequest, signUpRequest } from "@/config/auth-config";
 
 const styles = {
     page: {
@@ -126,6 +126,11 @@ function SignedInView() {
     );
     const [copied, setCopied] = useState(false);
 
+    // Resolved in an effect so the prerendered HTML and the first client render
+    // agree; true on localhost or when an account API base is configured.
+    const [accountAvailable, setAccountAvailable] = useState(false);
+    useEffect(() => setAccountAvailable(accountFeatureAvailable()), []);
+
     // AccountInfo carries the decoded idTokenClaims but not the raw JWT string,
     // so acquire it silently from cache to display the raw token too.
     //
@@ -190,9 +195,11 @@ function SignedInView() {
                             {`The user '${account?.username ?? "unknown"}' has signed in`}
                         </div>
 
-                        <Link href="/account" style={{ ...styles.primaryButton, marginTop: "1.5rem" }}>
-                            Manage my account
-                        </Link>
+                        {accountAvailable && (
+                            <Link href="/account" style={{ ...styles.primaryButton, marginTop: "1.5rem" }}>
+                                Manage my account
+                            </Link>
+                        )}
 
                         {claims && (
                             <>
