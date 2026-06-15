@@ -65,6 +65,35 @@ const styles = {
         fontFamily: "var(--font-nunito), 'Nunito', sans-serif",
         boxSizing: "border-box" as const,
     },
+    phoneRow: {
+        display: "flex",
+        gap: "0.75rem",
+        alignItems: "stretch",
+        width: "100%",
+        maxWidth: "26rem",
+        margin: "0 0 1rem 0",
+    },
+    dialSelect: {
+        padding: "0.625rem 0.75rem",
+        border: "0.0625rem solid #6b7280",
+        borderRadius: "0",
+        fontSize: "1rem",
+        fontFamily: "var(--font-nunito), 'Nunito', sans-serif",
+        color: "#292929",
+        backgroundColor: "#ffffff",
+        boxSizing: "border-box" as const,
+        flexShrink: 0,
+    },
+    phoneInput: {
+        flex: 1,
+        minWidth: 0,
+        padding: "0.625rem 0.75rem",
+        border: "0.0625rem solid #6b7280",
+        borderRadius: "0",
+        fontSize: "1rem",
+        fontFamily: "var(--font-nunito), 'Nunito', sans-serif",
+        boxSizing: "border-box" as const,
+    },
     hint: { margin: "-0.5rem 0 1rem 0", color: "#6b7280", fontSize: "0.8125rem", lineHeight: 1.5 },
     buttonRow: { display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" as const },
     primaryButton: {
@@ -100,6 +129,18 @@ type ChangeKey = "signin" | "phone";
 
 const PENDING_ACTION_KEY = "accountPendingAction";
 
+// Mirrors the native-auth sign-up flow: a fixed dial-code dropdown plus a local
+// number. The submitted value is `${dialCode} ${localNumber}`, e.g. "+61 412345678".
+const DIAL_CODES = [
+    { code: "+61", label: "Australia (+61)" },
+    { code: "+64", label: "New Zealand (+64)" },
+];
+
+/** Strip non-digits and any leading zero so it can be paired with a dial code. */
+function toLocalNumber(mobile: string): string {
+    return mobile.replace(/\D/g, "").replace(/^0+/, "");
+}
+
 // One MFA redirect per save attempt. If the user cancels/abandons the hosted
 // MFA page, the resumed attempt fails the silent request again — without this
 // cap it would immediately redirect again, looping forever.
@@ -134,6 +175,7 @@ function AccountManager() {
     // the code input and switches the primary button to "Verify & save".
     const [otpSent, setOtpSent] = useState(false);
     const [phone, setPhone] = useState("");
+    const [dialCode, setDialCode] = useState("+61");
 
     const getAccount = useCallback(
         () => instance.getActiveAccount() ?? instance.getAllAccounts()[0],
@@ -252,6 +294,7 @@ function AccountManager() {
                 setOtp("");
                 setOtpSent(false);
                 setPhone("");
+                setDialCode("+61");
                 // The saved value is authoritative from the 200 response — show
                 // it directly rather than re-reading Graph, which can lag the
                 // write by a few seconds.
@@ -490,25 +533,44 @@ function AccountManager() {
                                         <label style={styles.inputLabel} htmlFor="new-phone">
                                             New mobile number
                                         </label>
-                                        <input
-                                            id="new-phone"
-                                            type="tel"
-                                            style={styles.input}
-                                            value={phone}
-                                            placeholder="+61 412345678"
-                                            autoComplete="tel"
-                                            onChange={(e) => setPhone(e.target.value)}
-                                        />
+                                        <div style={styles.phoneRow}>
+                                            <select
+                                                aria-label="Country code"
+                                                style={styles.dialSelect}
+                                                value={dialCode}
+                                                onChange={(e) => setDialCode(e.target.value)}
+                                            >
+                                                {DIAL_CODES.map((d) => (
+                                                    <option key={d.code} value={d.code}>
+                                                        {d.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <input
+                                                id="new-phone"
+                                                type="tel"
+                                                style={styles.phoneInput}
+                                                value={phone}
+                                                placeholder="412345678"
+                                                autoComplete="tel-national"
+                                                onChange={(e) => setPhone(e.target.value)}
+                                            />
+                                        </div>
                                         <p style={styles.hint}>
-                                            Enter the number in international format, starting with the country
-                                            code (e.g. +61 for Australia).
+                                            Select your country code and enter your mobile number without the
+                                            leading zero (e.g. 412345678).
                                         </p>
                                         <div style={styles.buttonRow}>
                                             <button
                                                 type="button"
                                                 style={styles.primaryButton}
-                                                disabled={busy || phone.trim().length === 0}
-                                                onClick={() => performChange("phone", phone.trim())}
+                                                disabled={busy || toLocalNumber(phone).length === 0}
+                                                onClick={() =>
+                                                    performChange(
+                                                        "phone",
+                                                        `${dialCode} ${toLocalNumber(phone)}`
+                                                    )
+                                                }
                                             >
                                                 {busy ? "Saving…" : "Save number"}
                                             </button>
