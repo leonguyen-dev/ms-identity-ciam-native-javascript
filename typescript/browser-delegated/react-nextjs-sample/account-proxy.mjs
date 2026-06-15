@@ -4,12 +4,23 @@
  * Backs the /account page's three operations against Microsoft Graph. Each one
  * requires an APP-ONLY token (there is no delegated/self-service permission for
  * external-tenant customers), so the client secret and the Graph token must
- * never reach the browser. This little server keeps them here and exposes four
+ * never reach the browser. This little server keeps them here and exposes a few
  * narrow endpoints to the SPA:
  *
- *   GET  /api/account               read the caller's email + mobile number
- *   POST /api/account/signin-name   change sign-in email (fresh MFA)
- *   POST /api/account/phone         change mobile number (fresh MFA)
+ *   GET  /api/account                       read the caller's email + mobile number
+ *   POST /api/account/signin-name/send-otp  email a verification code to a NEW
+ *                                           sign-in email (proves mailbox control)
+ *   POST /api/account/signin-name           change sign-in email (fresh MFA + OTP)
+ *   POST /api/account/phone                 change mobile number (fresh MFA)
+ *
+ * New-email verification: Microsoft Graph has no app-only API to send + verify a
+ * one-time code to an arbitrary address, so the proxy mints its own. send-otp
+ * generates a 6-digit code, emails it to the requested address via Azure
+ * Communication Services (the same transport the native-auth otp-email-function
+ * uses), and stashes a hash keyed by the caller's oid. The signin-name change
+ * then requires that code back, so a user can only set their sign-in email to a
+ * mailbox they actually control. The fresh-MFA gate (ngcmfa) still applies to the
+ * change itself — OTP proves mailbox control, MFA proves it's really you.
  *
  * Password changes are deliberately NOT here. Microsoft Graph's resetPassword
  * API does not support application permissions (and can't act on a user's own
@@ -44,6 +55,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import crypto from "node:crypto";
+import { EmailClient } from "@azure/communication-email";
 
 const PORT = 3001;
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -59,6 +71,13 @@ const MOBILE_PHONE_METHOD_ID = "3179e48a-750b-4051-897c-87b9720928f7";
 // MFA time, so iat age ≈ time since MFA).
 const FRESH_MFA_MAX_AGE_SECONDS = 15 * 60;
 const CLOCK_SKEW_SECONDS = 5 * 60;
+
+// New-email verification OTP. The TTL is generous enough to survive the MFA
+// redirect detour the change endpoint triggers (the pending code is held while
+// the browser bounces through the hosted MFA page and back).
+const OTP_TTL_SECONDS = 10 * 60;
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_RESEND_COOLDOWN_SECONDS = 30;
 
 /* ----------------------------- configuration ------------------------------ */
 
@@ -98,6 +117,14 @@ if (!CLIENT_SECRET) {
     );
     process.exit(1);
 }
+
+// Azure Communication Services email — the transport for the new-email
+// verification OTP. Reuse the same connection string + sender the native-auth
+// otp-email-function uses (see typescript/native-auth/otp-email-function). When
+// unset, the send-otp endpoint fails with a clear message rather than silently.
+const ACS_CONNECTION_STRING = process.env.COMMUNICATION_SERVICES_CONNECTION_STRING;
+const ACS_SENDER_ADDRESS = process.env.COMMUNICATION_SERVICES_SENDER_ADDRESS;
+const MAIL_SENDER_DISPLAY_NAME = process.env.MAIL_SENDER_DISPLAY_NAME || "myServiceTas";
 
 /* ------------------------- user token verification ------------------------ */
 
@@ -288,6 +315,195 @@ function assertGraphOk(result, fallback) {
     if (result.ok) return;
     const message = result.json?.error?.message ?? result.json?.error?.code ?? fallback;
     throw new HttpError(result.status === 0 ? 502 : result.status, message);
+}
+
+/* --------------------------- new-email OTP store -------------------------- */
+
+// Pending verification codes, keyed by the caller's oid. In-memory only: a proxy
+// restart drops pending codes and the user simply requests a new one. Each entry
+// binds the code to a specific new email, so changing the email field after
+// sending forces a fresh send.
+const pendingOtps = new Map(); // oid -> { email, codeHash, expiresAt, attempts, lastSentAt }
+
+const hashOtp = (code) => crypto.createHash("sha256").update(code).digest("hex");
+
+// Constant-time compare of two hex digests (equal length here, but guard anyway).
+function hashesEqual(a, b) {
+    const bufA = Buffer.from(a, "hex");
+    const bufB = Buffer.from(b, "hex");
+    return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+}
+
+function generateOtp() {
+    return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+}
+
+/**
+ * Validate a submitted code for this oid+email and consume it on success. Returns
+ * nothing on success; throws HttpError("otp_invalid"/"otp_required") otherwise.
+ * A wrong code burns an attempt; exhausting attempts (or expiry) drops the entry.
+ */
+function verifyOtp(oid, email, code) {
+    const entry = pendingOtps.get(oid);
+    if (!entry) {
+        throw new HttpError(400, "Request a verification code for the new email first.", "otp_required");
+    }
+    const now = Math.floor(Date.now() / 1000);
+    if (entry.expiresAt < now) {
+        pendingOtps.delete(oid);
+        throw new HttpError(400, "Your verification code expired. Please request a new one.", "otp_required");
+    }
+    if (entry.email !== email.toLowerCase()) {
+        // The code was issued for a different address than the one being saved.
+        throw new HttpError(400, "The verification code was sent to a different email. Please request a new one.", "otp_required");
+    }
+    if (!/^\d{6}$/.test(code) || !hashesEqual(entry.codeHash, hashOtp(code))) {
+        entry.attempts += 1;
+        if (entry.attempts >= OTP_MAX_ATTEMPTS) {
+            pendingOtps.delete(oid);
+            throw new HttpError(400, "Too many incorrect attempts. Please request a new code and try again.", "otp_required");
+        }
+        throw new HttpError(400, "That verification code is incorrect. Please try again.", "otp_invalid");
+    }
+    pendingOtps.delete(oid); // single-use
+}
+
+/** Generate, store, and email a verification code for a new sign-in email. */
+async function sendSignInOtp(oid, email) {
+    if (!ACS_CONNECTION_STRING || !ACS_SENDER_ADDRESS) {
+        throw new HttpError(
+            500,
+            "Email provider not configured. Set COMMUNICATION_SERVICES_CONNECTION_STRING and COMMUNICATION_SERVICES_SENDER_ADDRESS in .env.local."
+        );
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const existing = pendingOtps.get(oid);
+    if (existing && now - existing.lastSentAt < OTP_RESEND_COOLDOWN_SECONDS) {
+        const wait = OTP_RESEND_COOLDOWN_SECONDS - (now - existing.lastSentAt);
+        throw new HttpError(429, `Please wait ${wait}s before requesting another code.`, "otp_cooldown");
+    }
+
+    const code = generateOtp();
+    pendingOtps.set(oid, {
+        email: email.toLowerCase(),
+        codeHash: hashOtp(code),
+        expiresAt: now + OTP_TTL_SECONDS,
+        attempts: 0,
+        lastSentAt: now,
+    });
+
+    const { subject, html, plainText } = buildOtpEmail(email, code, MAIL_SENDER_DISPLAY_NAME);
+    const client = new EmailClient(ACS_CONNECTION_STRING);
+    try {
+        // beginSend resolving means ACS accepted the message; we don't poll for
+        // delivery (it's routinely several seconds).
+        await client.beginSend({
+            senderAddress: ACS_SENDER_ADDRESS,
+            recipients: { to: [{ address: email }] },
+            content: { subject, html, plainText },
+        });
+    } catch (err) {
+        pendingOtps.delete(oid); // no email went out — don't strand a dead code
+        console.error("Failed to send verification email via ACS:", err);
+        throw new HttpError(502, "Could not send the verification email. Please try again.");
+    }
+}
+
+/**
+ * Branded verification email for a new sign-in address. Mirrors the native-auth
+ * otp-email-function's emailTemplate (kept inline here because that TS module
+ * isn't importable from this standalone .mjs proxy). Table-based with inline
+ * styles for email-client compatibility.
+ */
+function buildOtpEmail(email, code, brandName) {
+    const BRAND_GREEN = "#098851";
+    const TEXT_COLOR = "#292929";
+    const MUTED_COLOR = "#6b7280";
+    const FONT_STACK =
+        "'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+    const TAS_GOVT_LOGO =
+        "https://lively-plant-074801300.7.azurestaticapps.net/logos/tasmania-govt-black.png";
+
+    const subject = `${brandName} sign-in email verification code`;
+    const plainText =
+        `Verify your new sign-in email\n\n` +
+        `Use this code to confirm ${email} as your new sign-in email.\n\n` +
+        `Your code is: ${code}\n\n` +
+        `This code expires in ${Math.round(OTP_TTL_SECONDS / 60)} minutes. ` +
+        `If you didn't request this, you can ignore this email.\n\n` +
+        `Sincerely,\n${brandName}\n\n` +
+        `This message was sent from an unmonitored email address. Please do not reply.\n` +
+        `Service Tasmania | Tasmanian Government`;
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${subject}</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f5f5f5;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f5f5;">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0"
+               style="width:600px; max-width:600px; background-color:#ffffff; font-family:${FONT_STACK}; color:${TEXT_COLOR};">
+          <tr>
+            <td style="background-color:${BRAND_GREEN}; padding:22px 32px;">
+              <span style="color:#ffffff; font-size:22px; font-weight:600;">Verify your new sign-in email</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0 0 24px 0; font-size:16px; line-height:1.5;">
+                Use this code to confirm <span style="color:#0066cc; text-decoration:underline;">${email}</span> as your new sign-in email.
+              </p>
+              <p style="margin:0 0 24px 0; font-size:16px; line-height:1.5;">
+                <strong>Your code is: ${code}</strong>
+              </p>
+              <p style="margin:0 0 24px 0; font-size:14px; line-height:1.5; color:${MUTED_COLOR};">
+                This code expires in ${Math.round(OTP_TTL_SECONDS / 60)} minutes. If you didn't request this, you can ignore this email.
+              </p>
+              <p style="margin:0; font-size:16px; line-height:1.5;">Sincerely,</p>
+              <p style="margin:0; font-size:16px; font-style:italic;">${brandName}</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 32px;">
+              <hr style="border:none; border-top:1px solid #e5e7eb; margin:0;" />
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 32px 32px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="font-size:12px; color:${MUTED_COLOR}; line-height:1.5; vertical-align:bottom;">
+                    This message was sent from an unmonitored email address.<br />
+                    Please do not reply to this message.
+                  </td>
+                  <td align="right" style="vertical-align:middle;">
+                    <table role="presentation" cellpadding="0" cellspacing="0" align="right" style="border-collapse:collapse;">
+                      <tr>
+                        <td style="font-size:24px; font-weight:700; color:${TEXT_COLOR}; padding-right:14px; vertical-align:middle; white-space:nowrap;">Service&nbsp;Tasmania</td>
+                        <td style="border-left:1px solid ${TEXT_COLOR}; padding-left:14px; vertical-align:middle;">
+                          <img src="${TAS_GOVT_LOGO}" width="48" height="44" alt="Tasmanian Government" style="display:block; border:0; outline:none; text-decoration:none;" />
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+    return { subject, html, plainText };
 }
 
 /* ------------------------------ operations -------------------------------- */
@@ -560,6 +776,20 @@ http.createServer(async (req, res) => {
         if (route === "GET /api/account") {
             const summary = await getAccountSummary(oid, tokenEmail);
             sendJson(res, 200, summary);
+        } else if (route === "POST /api/account/signin-name/send-otp") {
+            // Emailing a code to the prospective address is low-risk and must
+            // happen before the user has fresh MFA, so this only needs a valid
+            // token (the fresh-MFA gate stays on the change itself).
+            const body = await parseJsonBody(req);
+            const email = String(body.email ?? "").trim();
+            if (!EMAIL_RE.test(email)) {
+                throw new HttpError(400, "Enter a valid email address.");
+            }
+            await sendSignInOtp(oid, email);
+            sendJson(res, 200, {
+                ok: true,
+                message: `We've emailed a verification code to ${email}.`,
+            });
         } else if (route === "POST /api/account/signin-name") {
             requireFreshMfa(user);
             const body = await parseJsonBody(req);
@@ -567,6 +797,9 @@ http.createServer(async (req, res) => {
             if (!EMAIL_RE.test(email)) {
                 throw new HttpError(400, "Enter a valid email address.");
             }
+            // Consume the verification code proving the user controls the new
+            // mailbox before any Graph write happens.
+            verifyOtp(oid, email, String(body.otp ?? "").trim());
             const { synced, warnings } = await changeSignInName(oid, email, tokenEmail);
             let message = `Sign-in email changed to ${email} (updated: ${synced.join(", ")}). Sign out and back in to refresh your token.`;
             if (warnings.length) {

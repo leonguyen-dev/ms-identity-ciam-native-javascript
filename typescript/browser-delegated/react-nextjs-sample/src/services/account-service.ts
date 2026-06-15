@@ -6,9 +6,10 @@ import { accountApiBase } from "@/config/auth-config";
  * authentication method — all of which need an app-only token, so the secret
  * and Graph token stay server-side.
  *
- *   summary    GET  /api/account               read current email + mobile
- *   signInName POST /api/account/signin-name   change sign-in email
- *   phone      POST /api/account/phone         change mobile number
+ *   summary       GET  /api/account                       read current email + mobile
+ *   sendSignInOtp POST /api/account/signin-name/send-otp  email a code to a new sign-in email
+ *   signInName    POST /api/account/signin-name           change sign-in email (needs that code)
+ *   phone         POST /api/account/phone                 change mobile number
  *
  * Password changes are NOT here: Microsoft Graph has no app-only (or external-
  * tenant self-service) path to set a user's own password, so the account page
@@ -76,11 +77,31 @@ export async function fetchAccountSummary(bearerToken: string): Promise<AccountS
     return (await callAccountApi("/account", bearerToken)) as AccountSummary;
 }
 
-/** Returns the human-readable confirmation message from the proxy. */
-export async function changeSignInName(bearerToken: string, email: string): Promise<string> {
-    const body = (await callAccountApi("/account/signin-name", bearerToken, {
+/**
+ * Email a verification code to a prospective new sign-in address. Proves the
+ * user controls the mailbox before changeSignInName() will accept it. Only needs
+ * a valid token (not a fresh-MFA one). Returns the proxy's confirmation message.
+ */
+export async function sendSignInNameOtp(bearerToken: string, email: string): Promise<string> {
+    const body = (await callAccountApi("/account/signin-name/send-otp", bearerToken, {
         method: "POST",
         body: JSON.stringify({ email }),
+    })) as { message?: string };
+    return body.message ?? "Verification code sent.";
+}
+
+/**
+ * Change the sign-in email. Requires the `otp` emailed by sendSignInNameOtp()
+ * and a fresh-MFA `bearerToken`. Returns the human-readable confirmation message.
+ */
+export async function changeSignInName(
+    bearerToken: string,
+    email: string,
+    otp: string
+): Promise<string> {
+    const body = (await callAccountApi("/account/signin-name", bearerToken, {
+        method: "POST",
+        body: JSON.stringify({ email, otp }),
     })) as { message?: string };
     return body.message ?? "Sign-in email changed.";
 }

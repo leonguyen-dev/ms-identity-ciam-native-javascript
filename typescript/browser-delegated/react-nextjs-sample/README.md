@@ -91,6 +91,17 @@ synced. The literal `userPrincipalName` is intentionally left as the tenant's
 user sees in the token comes from the identity / `mail`, not the UPN. Users must
 **sign out and back in** to get a token reflecting the new email.
 
+Before any of that, the user must **verify the new address**. Graph has no app-only
+API to send + check a code to an arbitrary email, so the proxy mints its own: the
+page first calls `…/signin-name/send-otp`, which emails a 6-digit code to the new
+address via Azure Communication Services (the same transport the native-auth
+[`otp-email-function`](../../native-auth/otp-email-function) uses) and stores a
+hash keyed by the caller's `oid`. The change endpoint then requires that code back,
+so a user can only point their sign-in email at a mailbox they actually control.
+Sending the code needs only a valid token; the change itself still needs fresh MFA
+— the code proves *mailbox control*, the `ngcmfa` challenge proves *it's really
+you*.
+
 > **`identities` gotchas (two of them):**
 > 1. Updating the `identities[]` property requires **`User.ManageIdentities.All`**
 >    specifically — `User.ReadWrite.All` is *not* enough (PATCH returns **403**).
@@ -119,9 +130,16 @@ challenge and redirects for MFA if it isn't recent), so a user can only ever cha
    and grant admin consent. Add a **client secret** (this turns the SPA's app
    registration into a confidential client for the proxy only — the browser never
    uses it).
-2. Put the secret in a gitignored `.env.local` in this folder:
+2. Put the secret in a gitignored `.env.local` in this folder. The two
+   `COMMUNICATION_SERVICES_*` values are the same ones the `otp-email-function`
+   uses (an Azure Communication Services email resource with a verified sender
+   domain) and are required for the sign-in-email verification code to send:
    ```bash
    ACCOUNT_CLIENT_SECRET=<the client secret value>
+   COMMUNICATION_SERVICES_CONNECTION_STRING=<ACS connection string>
+   COMMUNICATION_SERVICES_SENDER_ADDRESS=DoNotReply@<your-verified-domain>
+   # optional, defaults to "myServiceTas"
+   MAIL_SENDER_DISPLAY_NAME=myServiceTas
    ```
 3. In a second terminal, start the proxy alongside `npm run dev`:
    ```bash

@@ -19,6 +19,7 @@ import {
     changePhone,
     changeSignInName,
     fetchAccountSummary,
+    sendSignInNameOtp,
 } from "@/services/account-service";
 
 const styles = {
@@ -107,6 +108,8 @@ const MAX_MFA_REDIRECTS = 1;
 interface PendingAction {
     action: ChangeKey;
     value: string;
+    /** Verification code for a sign-in email change (carried across the MFA redirect). */
+    otp?: string;
     /** How many MFA redirects this save attempt has already been through. */
     attempts?: number;
 }
@@ -126,6 +129,10 @@ function AccountManager() {
     const [banner, setBanner] = useState<Banner>(null);
     const [open, setOpen] = useState<SectionKey | null>(null);
     const [email, setEmail] = useState("");
+    const [otp, setOtp] = useState("");
+    // True once a verification code has been emailed to the new address — reveals
+    // the code input and switches the primary button to "Verify & save".
+    const [otpSent, setOtpSent] = useState(false);
     const [phone, setPhone] = useState("");
 
     const getAccount = useCallback(
@@ -209,22 +216,41 @@ function AccountManager() {
         }
     }, [getListToken]);
 
+    /** Email a verification code to the prospective new sign-in address. */
+    const sendOtp = useCallback(async () => {
+        setBusy(true);
+        setBanner(null);
+        try {
+            // A cached token is fine — sending the code doesn't require fresh MFA.
+            const token = await getListToken();
+            const message = await sendSignInNameOtp(token, email.trim());
+            setOtpSent(true);
+            setBanner({ kind: "info", text: `${message} Enter it below to confirm the change.` });
+        } catch (error) {
+            setBanner({ kind: "error", text: `Could not send the code: ${(error as Error).message}` });
+        } finally {
+            setBusy(false);
+        }
+    }, [getListToken, email]);
+
     const performChange = useCallback(
-        async (action: ChangeKey, value: string, attempts = 0) => {
+        async (action: ChangeKey, value: string, attempts = 0, code = "") => {
             setBusy(true);
             setBanner(null);
             try {
-                const token = await getFreshMfaToken({ action, value, attempts });
+                const token = await getFreshMfaToken({ action, value, otp: code, attempts });
                 if (!token) return; // redirecting for MFA
 
                 const message =
                     action === "signin"
-                        ? await changeSignInName(token, value)
+                        ? await changeSignInName(token, value, code)
                         : await changePhone(token, value);
 
                 setBanner({ kind: "success", text: message });
                 setOpen(null);
                 setEmail("");
+                setOtp("");
+                setOtpSent(false);
                 setPhone("");
                 // The saved value is authoritative from the 200 response — show
                 // it directly rather than re-reading Graph, which can lag the
@@ -244,9 +270,16 @@ function AccountManager() {
                 ) {
                     // The proxy judged our token's MFA not fresh enough even
                     // though MSAL had one cached — same remedy as a refused
-                    // silent request: bounce through interactive MFA.
-                    await redirectForMfa({ action, value, attempts });
+                    // silent request: bounce through interactive MFA. Carry the
+                    // verification code so the resumed attempt still has it.
+                    await redirectForMfa({ action, value, otp: code, attempts });
                     return;
+                }
+                if (error instanceof AccountApiError && error.code === "otp_required") {
+                    // Code expired / consumed / too many tries — send the user
+                    // back to the "Send verification code" step.
+                    setOtp("");
+                    setOtpSent(false);
                 }
                 setBanner({ kind: "error", text: `Could not save the change: ${(error as Error).message}` });
             } finally {
@@ -266,7 +299,7 @@ function AccountManager() {
             try {
                 const pending = JSON.parse(stored) as PendingAction;
                 void loadSummary().then(() =>
-                    performChange(pending.action, pending.value, pending.attempts ?? 0)
+                    performChange(pending.action, pending.value, pending.attempts ?? 0, pending.otp ?? "")
                 );
                 return;
             } catch {
@@ -280,6 +313,9 @@ function AccountManager() {
 
     const toggle = (key: SectionKey) => {
         setBanner(null);
+        // Reset the email-change sub-flow whenever the section is opened/closed.
+        setOtp("");
+        setOtpSent(false);
         setOpen((current) => (current === key ? null : key));
     };
 
@@ -368,22 +404,79 @@ function AccountManager() {
                                             value={email}
                                             placeholder={summary?.email ?? "you@example.com"}
                                             autoComplete="email"
-                                            onChange={(e) => setEmail(e.target.value)}
+                                            disabled={otpSent}
+                                            onChange={(e) => {
+                                                setEmail(e.target.value);
+                                                // The code is bound to a specific
+                                                // address — editing it restarts the
+                                                // send step.
+                                                if (otpSent) {
+                                                    setOtpSent(false);
+                                                    setOtp("");
+                                                }
+                                            }}
                                         />
                                         <p style={styles.hint}>
                                             Use the new email the next time you sign in. It must not already be
-                                            registered to another account.
+                                            registered to another account. We&rsquo;ll email a verification code
+                                            to confirm you own this address.
                                         </p>
-                                        <div style={styles.buttonRow}>
-                                            <button
-                                                type="button"
-                                                style={styles.primaryButton}
-                                                disabled={busy || email.trim().length === 0}
-                                                onClick={() => performChange("signin", email.trim())}
-                                            >
-                                                {busy ? "Saving…" : "Save email"}
-                                            </button>
-                                        </div>
+
+                                        {!otpSent ? (
+                                            <div style={styles.buttonRow}>
+                                                <button
+                                                    type="button"
+                                                    style={styles.primaryButton}
+                                                    disabled={busy || email.trim().length === 0}
+                                                    onClick={sendOtp}
+                                                >
+                                                    {busy ? "Sending…" : "Send verification code"}
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <label style={styles.inputLabel} htmlFor="email-otp">
+                                                    Verification code
+                                                </label>
+                                                <input
+                                                    id="email-otp"
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    autoComplete="one-time-code"
+                                                    maxLength={6}
+                                                    style={styles.input}
+                                                    value={otp}
+                                                    placeholder="123456"
+                                                    onChange={(e) =>
+                                                        setOtp(e.target.value.replace(/\D/g, ""))
+                                                    }
+                                                />
+                                                <p style={styles.hint}>
+                                                    Enter the 6-digit code we emailed to {email.trim()}. You may
+                                                    be asked to verify your identity before the change is saved.
+                                                </p>
+                                                <div style={styles.buttonRow}>
+                                                    <button
+                                                        type="button"
+                                                        style={styles.primaryButton}
+                                                        disabled={busy || otp.trim().length !== 6}
+                                                        onClick={() =>
+                                                            performChange("signin", email.trim(), 0, otp.trim())
+                                                        }
+                                                    >
+                                                        {busy ? "Saving…" : "Verify & save email"}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        style={styles.toggleButton}
+                                                        disabled={busy}
+                                                        onClick={sendOtp}
+                                                    >
+                                                        Resend code
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
                                     </>
                                 )}
 
