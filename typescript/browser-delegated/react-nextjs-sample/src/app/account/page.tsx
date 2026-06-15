@@ -19,6 +19,7 @@ import {
     changePhone,
     changeSignInName,
     fetchAccountSummary,
+    sendPhoneOtp,
     sendSignInNameOtp,
 } from "@/services/account-service";
 
@@ -275,6 +276,23 @@ function AccountManager() {
         }
     }, [getListToken, email]);
 
+    /** SMS a verification code to the prospective new mobile number. */
+    const sendPhoneCode = useCallback(async () => {
+        setBusy(true);
+        setBanner(null);
+        try {
+            // A cached token is fine — sending the code doesn't require fresh MFA.
+            const token = await getListToken();
+            const message = await sendPhoneOtp(token, `${dialCode} ${toLocalNumber(phone)}`);
+            setOtpSent(true);
+            setBanner({ kind: "info", text: `${message} Enter it below to confirm the change.` });
+        } catch (error) {
+            setBanner({ kind: "error", text: `Could not send the code: ${(error as Error).message}` });
+        } finally {
+            setBusy(false);
+        }
+    }, [getListToken, dialCode, phone]);
+
     const performChange = useCallback(
         async (action: ChangeKey, value: string, attempts = 0, code = "") => {
             setBusy(true);
@@ -286,7 +304,7 @@ function AccountManager() {
                 const message =
                     action === "signin"
                         ? await changeSignInName(token, value, code)
-                        : await changePhone(token, value);
+                        : await changePhone(token, value, code);
 
                 setBanner({ kind: "success", text: message });
                 setOpen(null);
@@ -538,6 +556,7 @@ function AccountManager() {
                                                 aria-label="Country code"
                                                 style={styles.dialSelect}
                                                 value={dialCode}
+                                                disabled={otpSent}
                                                 onChange={(e) => setDialCode(e.target.value)}
                                             >
                                                 {DIAL_CODES.map((d) => (
@@ -553,28 +572,77 @@ function AccountManager() {
                                                 value={phone}
                                                 placeholder="412345678"
                                                 autoComplete="tel-national"
+                                                disabled={otpSent}
                                                 onChange={(e) => setPhone(e.target.value)}
                                             />
                                         </div>
                                         <p style={styles.hint}>
                                             Select your country code and enter your mobile number without the
-                                            leading zero (e.g. 412345678).
+                                            leading zero (e.g. 412345678). We&rsquo;ll text a verification code
+                                            to confirm you own this number.
                                         </p>
-                                        <div style={styles.buttonRow}>
-                                            <button
-                                                type="button"
-                                                style={styles.primaryButton}
-                                                disabled={busy || toLocalNumber(phone).length === 0}
-                                                onClick={() =>
-                                                    performChange(
-                                                        "phone",
-                                                        `${dialCode} ${toLocalNumber(phone)}`
-                                                    )
-                                                }
-                                            >
-                                                {busy ? "Saving…" : "Save number"}
-                                            </button>
-                                        </div>
+
+                                        {!otpSent ? (
+                                            <div style={styles.buttonRow}>
+                                                <button
+                                                    type="button"
+                                                    style={styles.primaryButton}
+                                                    disabled={busy || toLocalNumber(phone).length === 0}
+                                                    onClick={sendPhoneCode}
+                                                >
+                                                    {busy ? "Sending…" : "Send verification code"}
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <label style={styles.inputLabel} htmlFor="phone-otp">
+                                                    Verification code
+                                                </label>
+                                                <input
+                                                    id="phone-otp"
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    autoComplete="one-time-code"
+                                                    maxLength={6}
+                                                    style={styles.input}
+                                                    value={otp}
+                                                    placeholder="123456"
+                                                    onChange={(e) =>
+                                                        setOtp(e.target.value.replace(/\D/g, ""))
+                                                    }
+                                                />
+                                                <p style={styles.hint}>
+                                                    Enter the 6-digit code we sent by SMS to {dialCode}{" "}
+                                                    {toLocalNumber(phone)}. You may be asked to verify your
+                                                    identity before the change is saved.
+                                                </p>
+                                                <div style={styles.buttonRow}>
+                                                    <button
+                                                        type="button"
+                                                        style={styles.primaryButton}
+                                                        disabled={busy || otp.trim().length !== 6}
+                                                        onClick={() =>
+                                                            performChange(
+                                                                "phone",
+                                                                `${dialCode} ${toLocalNumber(phone)}`,
+                                                                0,
+                                                                otp.trim()
+                                                            )
+                                                        }
+                                                    >
+                                                        {busy ? "Saving…" : "Verify & save number"}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        style={styles.toggleButton}
+                                                        disabled={busy}
+                                                        onClick={sendPhoneCode}
+                                                    >
+                                                        Resend code
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
                                     </>
                                 )}
                             </>

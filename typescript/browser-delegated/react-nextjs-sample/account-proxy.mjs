@@ -11,16 +11,20 @@
  *   POST /api/account/signin-name/send-otp  email a verification code to a NEW
  *                                           sign-in email (proves mailbox control)
  *   POST /api/account/signin-name           change sign-in email (fresh MFA + OTP)
- *   POST /api/account/phone                 change mobile number (fresh MFA)
+ *   POST /api/account/phone/send-otp        SMS a verification code to a NEW
+ *                                           mobile number (proves number control)
+ *   POST /api/account/phone                 change mobile number (fresh MFA + OTP)
  *
- * New-email verification: Microsoft Graph has no app-only API to send + verify a
- * one-time code to an arbitrary address, so the proxy mints its own. send-otp
- * generates a 6-digit code, emails it to the requested address via Azure
- * Communication Services (the same transport the native-auth otp-email-function
- * uses), and stashes a hash keyed by the caller's oid. The signin-name change
- * then requires that code back, so a user can only set their sign-in email to a
- * mailbox they actually control. The fresh-MFA gate (ngcmfa) still applies to the
- * change itself — OTP proves mailbox control, MFA proves it's really you.
+ * New-contact verification: Microsoft Graph has no app-only API to send + verify
+ * a one-time code to an arbitrary address/number, so the proxy mints its own.
+ * send-otp generates a 6-digit code, delivers it to the requested email/number
+ * via Azure Communication Services (email reuses the same transport the
+ * native-auth otp-email-function uses; phone uses ACS SMS with an alphanumeric
+ * sender ID), and stashes a hash keyed by the caller's oid. The matching change
+ * endpoint then requires that code back, so a user can only set their sign-in
+ * email / MFA number to a mailbox or handset they actually control. The fresh-MFA
+ * gate (ngcmfa) still applies to the change itself — the OTP proves the user owns
+ * the new contact, MFA proves it's really them.
  *
  * Password changes are deliberately NOT here. Microsoft Graph's resetPassword
  * API does not support application permissions (and can't act on a user's own
@@ -56,6 +60,7 @@ import http from "node:http";
 import path from "node:path";
 import crypto from "node:crypto";
 import { EmailClient } from "@azure/communication-email";
+import { SmsClient } from "@azure/communication-sms";
 
 const PORT = 3001;
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -125,6 +130,15 @@ if (!CLIENT_SECRET) {
 const ACS_CONNECTION_STRING = process.env.COMMUNICATION_SERVICES_CONNECTION_STRING;
 const ACS_SENDER_ADDRESS = process.env.COMMUNICATION_SERVICES_SENDER_ADDRESS;
 const MAIL_SENDER_DISPLAY_NAME = process.env.MAIL_SENDER_DISPLAY_NAME || "myServiceTas";
+
+// Azure Communication Services SMS — the transport for the new-phone-number
+// verification OTP. The `from` is an alphanumeric sender ID (e.g. "myServiceTasPOC"):
+// no number to provision, but it must be registered with ACS first and is
+// one-way only (fine for OTP). When unset, the phone send-otp endpoint fails
+// with a clear message rather than silently. Reuses the same ACS connection
+// string as the email transport above (SMS just needs the resource to have an
+// enabled sender ID / phone number).
+const ACS_SMS_SENDER = process.env.COMMUNICATION_SERVICES_SMS_SENDER;
 
 /* ------------------------- user token verification ------------------------ */
 
@@ -317,13 +331,15 @@ function assertGraphOk(result, fallback) {
     throw new HttpError(result.status === 0 ? 502 : result.status, message);
 }
 
-/* --------------------------- new-email OTP store -------------------------- */
+/* ----------------------------- one-time-codes ----------------------------- */
 
 // Pending verification codes, keyed by the caller's oid. In-memory only: a proxy
 // restart drops pending codes and the user simply requests a new one. Each entry
-// binds the code to a specific new email, so changing the email field after
-// sending forces a fresh send.
-const pendingOtps = new Map(); // oid -> { email, codeHash, expiresAt, attempts, lastSentAt }
+// binds the code to a specific target (the new email or the new phone number), so
+// editing that field after sending forces a fresh send. Email and phone changes
+// get separate maps so a code in flight for one never clobbers the other.
+const pendingEmailOtps = new Map(); // oid -> { target, codeHash, expiresAt, attempts, lastSentAt }
+const pendingPhoneOtps = new Map();
 
 const hashOtp = (code) => crypto.createHash("sha256").update(code).digest("hex");
 
@@ -339,33 +355,59 @@ function generateOtp() {
 }
 
 /**
- * Validate a submitted code for this oid+email and consume it on success. Returns
- * nothing on success; throws HttpError("otp_invalid"/"otp_required") otherwise.
- * A wrong code burns an attempt; exhausting attempts (or expiry) drops the entry.
+ * Validate a submitted code against a pending entry and consume it on success.
+ * Returns nothing on success; throws HttpError("otp_invalid"/"otp_required")
+ * otherwise. A wrong code burns an attempt; exhausting attempts (or expiry)
+ * drops the entry. `noun` shapes the user-facing message ("email"/"number") and
+ * `normalize` makes the stored/submitted target comparable (lowercase email,
+ * identity for phone).
  */
-function verifyOtp(oid, email, code) {
-    const entry = pendingOtps.get(oid);
+function verifyOtp(store, oid, target, code, { noun, normalize }) {
+    const entry = store.get(oid);
     if (!entry) {
-        throw new HttpError(400, "Request a verification code for the new email first.", "otp_required");
+        throw new HttpError(400, `Request a verification code for the new ${noun} first.`, "otp_required");
     }
     const now = Math.floor(Date.now() / 1000);
     if (entry.expiresAt < now) {
-        pendingOtps.delete(oid);
+        store.delete(oid);
         throw new HttpError(400, "Your verification code expired. Please request a new one.", "otp_required");
     }
-    if (entry.email !== email.toLowerCase()) {
-        // The code was issued for a different address than the one being saved.
-        throw new HttpError(400, "The verification code was sent to a different email. Please request a new one.", "otp_required");
+    if (entry.target !== normalize(target)) {
+        // The code was issued for a different target than the one being saved.
+        throw new HttpError(400, `The verification code was sent to a different ${noun}. Please request a new one.`, "otp_required");
     }
     if (!/^\d{6}$/.test(code) || !hashesEqual(entry.codeHash, hashOtp(code))) {
         entry.attempts += 1;
         if (entry.attempts >= OTP_MAX_ATTEMPTS) {
-            pendingOtps.delete(oid);
+            store.delete(oid);
             throw new HttpError(400, "Too many incorrect attempts. Please request a new code and try again.", "otp_required");
         }
         throw new HttpError(400, "That verification code is incorrect. Please try again.", "otp_invalid");
     }
-    pendingOtps.delete(oid); // single-use
+    store.delete(oid); // single-use
+}
+
+/**
+ * Enforce the resend cooldown, generate a code, and store its hash bound to the
+ * (normalized) target. Returns the plaintext code for the caller to deliver.
+ * Throws HttpError("otp_cooldown") if asked again within the cooldown window.
+ */
+function stashOtp(store, oid, target, normalize) {
+    const now = Math.floor(Date.now() / 1000);
+    const existing = store.get(oid);
+    if (existing && now - existing.lastSentAt < OTP_RESEND_COOLDOWN_SECONDS) {
+        const wait = OTP_RESEND_COOLDOWN_SECONDS - (now - existing.lastSentAt);
+        throw new HttpError(429, `Please wait ${wait}s before requesting another code.`, "otp_cooldown");
+    }
+    const code = generateOtp();
+    store.set(oid, {
+        target: normalize(target),
+        codeHash: hashOtp(code),
+        expiresAt: now + OTP_TTL_SECONDS,
+        attempts: 0,
+        lastSentAt: now,
+    });
+    return code;
 }
 
 /** Generate, store, and email a verification code for a new sign-in email. */
@@ -377,21 +419,7 @@ async function sendSignInOtp(oid, email) {
         );
     }
 
-    const now = Math.floor(Date.now() / 1000);
-    const existing = pendingOtps.get(oid);
-    if (existing && now - existing.lastSentAt < OTP_RESEND_COOLDOWN_SECONDS) {
-        const wait = OTP_RESEND_COOLDOWN_SECONDS - (now - existing.lastSentAt);
-        throw new HttpError(429, `Please wait ${wait}s before requesting another code.`, "otp_cooldown");
-    }
-
-    const code = generateOtp();
-    pendingOtps.set(oid, {
-        email: email.toLowerCase(),
-        codeHash: hashOtp(code),
-        expiresAt: now + OTP_TTL_SECONDS,
-        attempts: 0,
-        lastSentAt: now,
-    });
+    const code = stashOtp(pendingEmailOtps, oid, email, (e) => e.toLowerCase());
 
     const { subject, html, plainText } = buildOtpEmail(email, code, MAIL_SENDER_DISPLAY_NAME);
     const client = new EmailClient(ACS_CONNECTION_STRING);
@@ -404,9 +432,44 @@ async function sendSignInOtp(oid, email) {
             content: { subject, html, plainText },
         });
     } catch (err) {
-        pendingOtps.delete(oid); // no email went out — don't strand a dead code
+        pendingEmailOtps.delete(oid); // no email went out — don't strand a dead code
         console.error("Failed to send verification email via ACS:", err);
         throw new HttpError(502, "Could not send the verification email. Please try again.");
+    }
+}
+
+/**
+ * Generate, store, and SMS a verification code for a new mobile number. The code
+ * is bound to the exact number being saved (`+{cc} {number}`), so editing the
+ * field after sending forces a fresh send. ACS SMS wants a bare E.164 recipient,
+ * so the space between dial code and number is stripped for the `to`.
+ */
+async function sendPhoneOtp(oid, phoneNumber) {
+    if (!ACS_CONNECTION_STRING || !ACS_SMS_SENDER) {
+        throw new HttpError(
+            500,
+            "SMS provider not configured. Set COMMUNICATION_SERVICES_CONNECTION_STRING and COMMUNICATION_SERVICES_SMS_SENDER in .env.local."
+        );
+    }
+
+    const code = stashOtp(pendingPhoneOtps, oid, phoneNumber, (p) => p.trim());
+    const minutes = Math.round(OTP_TTL_SECONDS / 60);
+
+    const client = new SmsClient(ACS_CONNECTION_STRING);
+    try {
+        const [result] = await client.send({
+            from: ACS_SMS_SENDER,
+            to: [phoneNumber.replace(/\s+/g, "")],
+            message: `Your ${MAIL_SENDER_DISPLAY_NAME} verification code is ${code}. It expires in ${minutes} minutes. If you didn't request this, ignore this message.`,
+        });
+        if (!result?.successful) {
+            const detail = result?.errorMessage ?? `HTTP ${result?.httpStatusCode ?? "?"}`;
+            throw new Error(detail);
+        }
+    } catch (err) {
+        pendingPhoneOtps.delete(oid); // no SMS went out — don't strand a dead code
+        console.error("Failed to send verification SMS via ACS:", err);
+        throw new HttpError(502, "Could not send the verification SMS. Please try again.");
     }
 }
 
@@ -799,13 +862,33 @@ http.createServer(async (req, res) => {
             }
             // Consume the verification code proving the user controls the new
             // mailbox before any Graph write happens.
-            verifyOtp(oid, email, String(body.otp ?? "").trim());
+            verifyOtp(pendingEmailOtps, oid, email, String(body.otp ?? "").trim(), {
+                noun: "email",
+                normalize: (e) => e.toLowerCase(),
+            });
             const { synced, warnings } = await changeSignInName(oid, email, tokenEmail);
             let message = `Sign-in email changed to ${email} (updated: ${synced.join(", ")}). Sign out and back in to refresh your token.`;
             if (warnings.length) {
                 message += ` Note: ${warnings.join("; ")}`;
             }
             sendJson(res, 200, { ok: true, message });
+        } else if (route === "POST /api/account/phone/send-otp") {
+            // Texting a code to the prospective number is low-risk and must
+            // happen before the user has fresh MFA, so this only needs a valid
+            // token (the fresh-MFA gate stays on the change itself).
+            const body = await parseJsonBody(req);
+            const phoneNumber = String(body.phoneNumber ?? "").trim();
+            if (!PHONE_RE.test(phoneNumber)) {
+                throw new HttpError(
+                    400,
+                    "Enter a valid phone number in international format, e.g. +61 412345678."
+                );
+            }
+            await sendPhoneOtp(oid, phoneNumber);
+            sendJson(res, 200, {
+                ok: true,
+                message: `We've sent a verification code by SMS to ${phoneNumber}.`,
+            });
         } else if (route === "POST /api/account/phone") {
             requireFreshMfa(user);
             const body = await parseJsonBody(req);
@@ -816,6 +899,12 @@ http.createServer(async (req, res) => {
                     "Enter a valid phone number in international format, e.g. +61 412345678."
                 );
             }
+            // Consume the verification code proving the user controls the new
+            // number before any Graph write happens.
+            verifyOtp(pendingPhoneOtps, oid, phoneNumber, String(body.otp ?? "").trim(), {
+                noun: "number",
+                normalize: (p) => p.trim(),
+            });
             await changePhone(oid, phoneNumber);
             sendJson(res, 200, { ok: true, message: `Mobile number changed to ${phoneNumber}.` });
         } else {
