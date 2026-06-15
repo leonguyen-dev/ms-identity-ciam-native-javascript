@@ -111,3 +111,47 @@ export const signUpRequest: RedirectRequest = {
 };
 
 export const logoutRequest: EndSessionRequest = {};
+
+/* ------------------------------------------------------------------------- *
+ * Account self-management (change password / sign-in name / phone)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Base URL of the account proxy (account-proxy.mjs locally; an Azure Function
+ * in production via NEXT_PUBLIC_ACCOUNT_API_BASE, inlined at build time). The
+ * Microsoft Graph APIs that change a sign-in identity or a phone authentication
+ * method all need an APP-ONLY token (there is no delegated self-service
+ * permission for external-tenant customers), so the proxy holds the client
+ * secret + Graph token server-side and the SPA never sees them. The SPA only
+ * ever sends the signed-in user's ID token; the proxy verifies it and derives
+ * the Graph user id from its `oid`, so a caller can only manage their own
+ * account.
+ */
+export const accountApiBase =
+    process.env.NEXT_PUBLIC_ACCOUNT_API_BASE ?? "http://localhost:3001/api";
+
+/**
+ * Whether the account self-service feature can work where the app is running.
+ * The default API base is the local proxy, which only exists in dev — on a
+ * deployed site without NEXT_PUBLIC_ACCOUNT_API_BASE the links would dead-end
+ * in "could not reach the proxy", so the UI hides them instead. Call from an
+ * effect (not during render) to avoid hydration mismatches with the static
+ * export.
+ */
+export function accountFeatureAvailable(): boolean {
+    if (process.env.NEXT_PUBLIC_ACCOUNT_API_BASE) return true;
+    return typeof window !== "undefined" && window.location.hostname === "localhost";
+}
+
+/**
+ * Claims challenge demanding fresh MFA ("ngcmfa" = next-gen-credential MFA).
+ * Every account-change request carries this so Entra only issues the token if
+ * the user completed MFA recently (otherwise the silent request fails with
+ * invalid_grant / interaction_required and the app redirects for MFA). Because
+ * claims-based caching is disabled by default, MSAL always goes to the network
+ * for these requests, so the freshness check is enforced on every operation.
+ */
+export const ngcmfaClaims = JSON.stringify({
+    id_token: { amr: { essential: true, values: ["ngcmfa"] } },
+    access_token: { amr: { essential: true, values: ["ngcmfa"] } },
+});
