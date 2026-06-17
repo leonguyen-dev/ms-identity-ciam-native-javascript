@@ -173,6 +173,16 @@ function SignedInView() {
         return String(value);
     };
 
+    // Prefer the `email` claim (sourced from the user's mail attribute, stable
+    // across auth methods) over MSAL's account.username, which comes from the
+    // mutable `preferred_username` — a passkey sign-in returns the synthetic UPN
+    // (<GUID>@…onmicrosoft.com) there instead of the email.
+    const displayName =
+        (claims?.email as string | undefined) ??
+        (claims?.preferred_username as string | undefined) ??
+        account?.username ??
+        "unknown";
+
     const copyToken = () => {
         if (!idToken) return;
         navigator.clipboard.writeText(idToken).then(() => {
@@ -192,7 +202,7 @@ function SignedInView() {
                 <div style={{ ...styles.card, gridTemplateColumns: "1fr" }}>
                     <div style={styles.column}>
                         <div style={styles.signedInPanel}>
-                            {`The user '${account?.username ?? "unknown"}' has signed in`}
+                            {`The user '${displayName}' has signed in`}
                         </div>
 
                         {accountAvailable && (

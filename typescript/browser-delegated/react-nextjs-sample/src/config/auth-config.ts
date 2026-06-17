@@ -89,9 +89,14 @@ export const msalConfig: Configuration = {
  * `phone_number` claim is injected by the OnTokenIssuanceStart extension via the
  * claims-mapping policy assigned to this app (see token-issuance-function).
  * offline_access requests a refresh token for silent renewal.
+ *
+ * `email` yields the `email` claim, sourced from the user's mail attribute. Use
+ * it (not `preferred_username`) to display the user's email: preferred_username
+ * is mutable and reflects the sign-in *credential*, so a passkey sign-in returns
+ * the synthetic UPN (<GUID>@…onmicrosoft.com) while email/SMS returns the email.
  */
 export const loginRequest: RedirectRequest = {
-    scopes: ["openid", "profile", "offline_access"],
+    scopes: ["openid", "profile", "email", "offline_access"],
     // Force fresh authentication instead of silently resuming an existing Entra
     // session. Without this, a stale/half-established ciamlogin.com session from a
     // prior incomplete attempt makes "Log in" loop at the /reprocess step (Entra
