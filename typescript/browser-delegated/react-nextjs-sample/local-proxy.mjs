@@ -1,17 +1,30 @@
 /**
- * Local account self-management proxy — run with `npm run account-proxy`.
+ * Local Graph proxy for the browser-delegated sample — run with `npm run proxy`.
  *
- * Backs the /account page's three operations against Microsoft Graph. Each one
- * requires an APP-ONLY token (there is no delegated/self-service permission for
- * external-tenant customers), so the client secret and the Graph token must
- * never reach the browser. This little server keeps them here and exposes a few
- * narrow endpoints to the SPA:
+ * Backs the two self-service pages (Security/passkeys and My account) against
+ * Microsoft Graph. Both feature sets hit Graph APIs that require an APP-ONLY
+ * token (there is no delegated/self-service permission for external-tenant
+ * customers), so the client secret and the Graph token must never reach the
+ * browser. This one server keeps them here and exposes a few narrow endpoints to
+ * the SPA, split across two disjoint route namespaces:
  *
- *   GET  /api/account                       read the caller's email + mobile number
- *   POST /api/account/signin-name/send-otp  email a verification code to a NEW
- *                                           sign-in email (proves mailbox control)
- *   POST /api/account/signin-name           change sign-in email (fresh MFA + OTP)
- *   POST /api/account/phone                 change mobile number (fresh MFA)
+ *   Passkeys (FIDO2) — fido2Methods provisioning:
+ *     GET    /api/passkeys                   list the caller's passkeys
+ *     GET    /api/passkeys/creation-options  WebAuthn creationOptions  (fresh MFA)
+ *     POST   /api/passkeys                   register a credential     (fresh MFA)
+ *     DELETE /api/passkeys/{id}              delete a passkey          (fresh MFA)
+ *
+ *   Account self-management:
+ *     GET  /api/account                       read the caller's email + mobile number
+ *     POST /api/account/signin-name/send-otp  email a verification code to a NEW
+ *                                             sign-in email (proves mailbox control)
+ *     POST /api/account/signin-name           change sign-in email (fresh MFA + OTP)
+ *     POST /api/account/phone                 change mobile number (fresh MFA)
+ *
+ * (Previously two separate servers — passkey-proxy.mjs and account-proxy.mjs —
+ * that both bound port 3001, so only one could run at a time. They share the same
+ * token-verification + app-only-Graph machinery and their routes never overlap,
+ * so they are merged here.)
  *
  * New-email verification: Microsoft Graph has no app-only API to send + verify a
  * one-time code to an arbitrary address, so the proxy mints its own. send-otp
@@ -38,6 +51,7 @@
  * amr/auth_time claim for the proxy to re-verify MFA from independently).
  *
  * Graph app-role permissions the app registration needs (admin-consented):
+ *   - UserAuthMethod-Passkey.ReadWrite.All  (list/register/delete fido2Methods)
  *   - User.ReadWrite.All                  (read user + sync mail/otherMails after a
  *                                          sign-in email change — that profile email
  *                                          is where Entra sends OTP verification codes)
@@ -60,12 +74,16 @@ import { EmailClient } from "@azure/communication-email";
 const PORT = 3001;
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 // External ID customer-account sign-in identities are surfaced/managed on beta;
-// v1.0 can return an empty identities[] for these accounts.
+// v1.0 can return an empty identities[] for these accounts. fido2Methods
+// provisioning also lives on beta.
 const GRAPH_BETA = "https://graph.microsoft.com/beta";
 
 // Well-known authentication-method ids (the same constants for every user).
 // https://learn.microsoft.com/graph/api/phoneauthenticationmethod-update
 const MOBILE_PHONE_METHOD_ID = "3179e48a-750b-4051-897c-87b9720928f7";
+
+// Challenge lifetime baked into the passkey creationOptions Graph hands back.
+const CHALLENGE_TIMEOUT_MINUTES = 60;
 
 // How fresh the user's token must be for a change (ngcmfa tokens are issued at
 // MFA time, so iat age ≈ time since MFA).
@@ -110,10 +128,12 @@ const TENANT_SUBDOMAIN = process.env.ACCOUNT_TENANT_SUBDOMAIN ?? "myservicetasde
 const TENANT_ID = process.env.ACCOUNT_TENANT_ID ?? "a67366e7-9873-4a38-9bae-0a4a18952688";
 const CLIENT_ID = process.env.ACCOUNT_CLIENT_ID ?? "5f0a52ca-f5db-4a6d-9b3a-3180d51fdd08";
 
-const CLIENT_SECRET = process.env.ACCOUNT_CLIENT_SECRET;
+// One app registration backs both feature sets, so either secret name works.
+// (PASSKEY_CLIENT_SECRET is kept for back-compat with older .env.local files.)
+const CLIENT_SECRET = process.env.ACCOUNT_CLIENT_SECRET ?? process.env.PASSKEY_CLIENT_SECRET;
 if (!CLIENT_SECRET) {
     console.error(
-        "ACCOUNT_CLIENT_SECRET is not set. Add it to .env.local (see README, 'My account' section)."
+        "ACCOUNT_CLIENT_SECRET is not set. Add it to .env.local (see README, 'My account' / 'Passkeys' sections)."
     );
     process.exit(1);
 }
@@ -506,7 +526,12 @@ function buildOtpEmail(email, code, brandName) {
     return { subject, html, plainText };
 }
 
-/* ------------------------------ operations -------------------------------- */
+/* --------------------------- passkey operations --------------------------- */
+
+/** Graph collection holding the caller's FIDO2/passkey methods. */
+const fido2MethodsPath = (oid) => `/users/${oid}/authentication/fido2Methods`;
+
+/* --------------------------- account operations --------------------------- */
 
 const USER_SELECT = "displayName,identities,userPrincipalName,mail,otherMails";
 
@@ -716,19 +741,38 @@ const PHONE_RE = /^\+[0-9][0-9\s]{6,17}$/;
 
 /* -------------------------------- server ---------------------------------- */
 
-// Pin CORS to the dev SPA rather than `*` — this proxy wields app-only Graph
-// permissions, so don't let arbitrary pages in the browser talk to it.
-const SPA_ORIGIN = process.env.ACCOUNT_ALLOWED_ORIGIN ?? "http://localhost:3000";
+// Pin CORS to known dev origins rather than `*` — this proxy wields app-only
+// Graph permissions, so don't let arbitrary pages in the browser talk to it.
+// Two origins are in play: the account page runs on plain localhost, while the
+// passkey page is served from the auth.<tenant>.ciamlogin.com host (the WebAuthn
+// rp.id requires it). Reflect whichever allowlisted origin made the request.
+const ALLOWED_ORIGINS = new Set(
+    (
+        process.env.PROXY_ALLOWED_ORIGINS ??
+        `http://localhost:3000,https://auth.${TENANT_SUBDOMAIN}.ciamlogin.com:3000`
+    )
+        .split(",")
+        .map((o) => o.trim())
+        .filter(Boolean)
+);
 
-const CORS_HEADERS = {
-    "Access-Control-Allow-Origin": SPA_ORIGIN,
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Max-Age": "86400",
-};
+function corsHeadersFor(req) {
+    const origin = req.headers.origin;
+    // Reflect the caller's origin only when it's allowlisted; otherwise fall back
+    // to the first allowed origin (a non-match the browser will simply block).
+    const allowOrigin =
+        origin && ALLOWED_ORIGINS.has(origin) ? origin : [...ALLOWED_ORIGINS][0];
+    return {
+        "Access-Control-Allow-Origin": allowOrigin,
+        Vary: "Origin",
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Max-Age": "86400",
+    };
+}
 
-function sendJson(res, status, body) {
-    res.writeHead(status, { "Content-Type": "application/json", ...CORS_HEADERS });
+function sendJson(res, status, body, corsHeaders) {
+    res.writeHead(status, { "Content-Type": "application/json", ...corsHeaders });
     res.end(typeof body === "string" ? body : JSON.stringify(body));
 }
 
@@ -753,8 +797,10 @@ async function parseJsonBody(req) {
 }
 
 http.createServer(async (req, res) => {
+    const corsHeaders = corsHeadersFor(req);
+
     if (req.method === "OPTIONS") {
-        res.writeHead(204, CORS_HEADERS);
+        res.writeHead(204, corsHeaders);
         res.end();
         return;
     }
@@ -767,6 +813,53 @@ http.createServer(async (req, res) => {
         const user = await verifyUserToken(req);
         const oid = user.oid;
 
+        /* ---------------------------- passkeys ---------------------------- */
+        if (url.pathname === "/api/passkeys" || url.pathname.startsWith("/api/passkeys/")) {
+            const userPath = fido2MethodsPath(oid);
+
+            if (route === "GET /api/passkeys") {
+                const result = await callGraph("GET", userPath, undefined, GRAPH_BETA);
+                sendJson(res, result.status, result.body, corsHeaders);
+            } else if (route === "GET /api/passkeys/creation-options") {
+                requireFreshMfa(user);
+                const result = await callGraph(
+                    "GET",
+                    `${userPath}/creationOptions(challengeTimeoutInMinutes=${CHALLENGE_TIMEOUT_MINUTES})`,
+                    undefined,
+                    GRAPH_BETA
+                );
+                sendJson(res, result.status, result.body, corsHeaders);
+            } else if (route === "POST /api/passkeys") {
+                requireFreshMfa(user);
+                const body = await parseJsonBody(req);
+                if (!body.publicKeyCredential || !body.displayName) {
+                    throw new HttpError(400, "Expected { displayName, publicKeyCredential }.");
+                }
+                const result = await callGraph(
+                    "POST",
+                    userPath,
+                    {
+                        displayName: body.displayName,
+                        publicKeyCredential: body.publicKeyCredential,
+                    },
+                    GRAPH_BETA
+                );
+                sendJson(res, result.status, result.body, corsHeaders);
+            } else if (req.method === "DELETE" && url.pathname.startsWith("/api/passkeys/")) {
+                requireFreshMfa(user);
+                const passkeyId = decodeURIComponent(url.pathname.slice("/api/passkeys/".length));
+                if (!/^[A-Za-z0-9_-]+$/.test(passkeyId)) {
+                    throw new HttpError(400, "Invalid passkey id.");
+                }
+                const result = await callGraph("DELETE", `${userPath}/${passkeyId}`, undefined, GRAPH_BETA);
+                sendJson(res, result.status, result.body || "{}", corsHeaders);
+            } else {
+                throw new HttpError(404, "Not found.");
+            }
+            return;
+        }
+
+        /* ----------------------------- account ---------------------------- */
         // Email claim from the verified token — used as a probe value when the
         // app-only read masks identities[] (see getRealIdentities).
         const tokenEmail = [user.email, user.preferred_username].find(
@@ -775,7 +868,7 @@ http.createServer(async (req, res) => {
 
         if (route === "GET /api/account") {
             const summary = await getAccountSummary(oid, tokenEmail);
-            sendJson(res, 200, summary);
+            sendJson(res, 200, summary, corsHeaders);
         } else if (route === "POST /api/account/signin-name/send-otp") {
             // Emailing a code to the prospective address is low-risk and must
             // happen before the user has fresh MFA, so this only needs a valid
@@ -789,7 +882,7 @@ http.createServer(async (req, res) => {
             sendJson(res, 200, {
                 ok: true,
                 message: `We've emailed a verification code to ${email}.`,
-            });
+            }, corsHeaders);
         } else if (route === "POST /api/account/signin-name") {
             requireFreshMfa(user);
             const body = await parseJsonBody(req);
@@ -805,7 +898,7 @@ http.createServer(async (req, res) => {
             if (warnings.length) {
                 message += ` Note: ${warnings.join("; ")}`;
             }
-            sendJson(res, 200, { ok: true, message });
+            sendJson(res, 200, { ok: true, message }, corsHeaders);
         } else if (route === "POST /api/account/phone") {
             requireFreshMfa(user);
             const body = await parseJsonBody(req);
@@ -817,17 +910,19 @@ http.createServer(async (req, res) => {
                 );
             }
             await changePhone(oid, phoneNumber);
-            sendJson(res, 200, { ok: true, message: `Mobile number changed to ${phoneNumber}.` });
+            sendJson(res, 200, { ok: true, message: `Mobile number changed to ${phoneNumber}.` }, corsHeaders);
         } else {
             throw new HttpError(404, "Not found.");
         }
     } catch (error) {
         const status = error instanceof HttpError ? error.status : 500;
         if (status === 500) console.error(error);
-        sendJson(res, status, { error: { message: error.message, code: error.code } });
+        sendJson(res, status, { error: { message: error.message, code: error.code } }, corsHeaders);
     }
     // Loopback only — never expose an app-only Graph credential to the LAN.
 }).listen(PORT, "127.0.0.1", () => {
-    console.log(`Account proxy listening on http://localhost:${PORT} (CORS origin: ${SPA_ORIGIN})`);
+    console.log(`Local Graph proxy listening on http://localhost:${PORT}`);
+    console.log(`  passkeys: /api/passkeys   account: /api/account`);
+    console.log(`  CORS origins: ${[...ALLOWED_ORIGINS].join(", ")}`);
     console.log(`Graph user scope: tenant ${TENANT_SUBDOMAIN} (${TENANT_ID})`);
 });

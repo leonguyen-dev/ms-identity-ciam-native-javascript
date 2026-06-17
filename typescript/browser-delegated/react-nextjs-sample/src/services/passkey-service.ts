@@ -1,9 +1,9 @@
 import { passkeyApiBase } from "@/config/auth-config";
 
 /**
- * Client for the local passkey proxy (passkey-proxy.mjs) plus the WebAuthn
- * ceremony itself. The proxy fronts the Microsoft Graph beta fido2Methods
- * provisioning APIs:
+ * Client for the local proxy's passkey routes (local-proxy.mjs) plus the
+ * WebAuthn ceremony itself. The proxy fronts the Microsoft Graph beta
+ * fido2Methods provisioning APIs:
  *
  *   list     GET    /users/{oid}/authentication/fido2Methods
  *   options  GET    /users/{oid}/authentication/fido2Methods/creationOptions(...)
@@ -103,7 +103,7 @@ async function callPasskeyApi(
         });
     } catch {
         throw new Error(
-            "Could not reach the passkey proxy. Start it with `npm run passkey-proxy` (see README, Passkeys section)."
+            "Could not reach the local proxy. Start it with `npm run proxy` (see README, Passkeys section)."
         );
     }
 

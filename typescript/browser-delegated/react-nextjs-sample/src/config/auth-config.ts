@@ -117,7 +117,7 @@ export const logoutRequest: EndSessionRequest = {};
  * ------------------------------------------------------------------------- */
 
 /**
- * Base URL of the local passkey proxy (passkey-proxy.mjs). The Microsoft Graph
+ * Base URL of the local proxy's passkey routes (local-proxy.mjs). The Microsoft Graph
  * fido2Methods provisioning APIs need an app-only token (there is no delegated
  * self-service permission for external-tenant customers yet), so the proxy holds
  * the client secret + Graph token server-side and the SPA never sees them.
@@ -142,7 +142,7 @@ export const passkeyRpId = `${TENANT_SUBDOMAIN}.ciamlogin.com`;
  * ------------------------------------------------------------------------- */
 
 /**
- * Base URL of the account proxy (account-proxy.mjs locally; an Azure Function
+ * Base URL of the account proxy (local-proxy.mjs locally; an Azure Function
  * in production via NEXT_PUBLIC_ACCOUNT_API_BASE, inlined at build time). The
  * Microsoft Graph APIs that change a sign-in identity or a phone authentication
  * method all need an APP-ONLY token (there is no delegated self-service
@@ -162,10 +162,19 @@ export const accountApiBase =
  * in "could not reach the proxy", so the UI hides them instead. Call from an
  * effect (not during render) to avoid hydration mismatches with the static
  * export.
+ *
+ * Two dev hosts are recognised: plain `localhost` (`npm run dev`) and the
+ * passkey rp domain `auth.<tenant>.ciamlogin.com` (`npm run dev:passkey`). The
+ * passkey server already fronts the same local proxy (the proxy's CORS allowlist
+ * includes that origin), so enabling the account features there lets a single
+ * `npm run dev:passkey` host both passkeys and account management — the two dev
+ * servers can't run together anyway since both bind port 3000.
  */
 export function accountFeatureAvailable(): boolean {
     if (process.env.NEXT_PUBLIC_ACCOUNT_API_BASE) return true;
-    return typeof window !== "undefined" && window.location.hostname === "localhost";
+    if (typeof window === "undefined") return false;
+    const host = window.location.hostname;
+    return host === "localhost" || host === passkeyRpId || host.endsWith(`.${passkeyRpId}`);
 }
 
 /**

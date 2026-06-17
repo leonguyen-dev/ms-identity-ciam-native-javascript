@@ -125,10 +125,11 @@ cert, proxy). Docs: [Sign in with passkeys](https://learn.microsoft.com/en-us/en
    Graph **application** permission **`UserAuthMethod-Passkey.ReadWrite.All`**
    and **Grant admin consent**. The fido2Methods provisioning APIs are app-only;
    there is no customer self-service (delegated) permission yet, which is why the
-   sample runs them behind `passkey-proxy.mjs` instead of from the browser.
+   sample runs them behind `local-proxy.mjs` instead of from the browser.
 4. **Client secret**: app registration → Certificates & secrets → new secret →
-   put it in the sample's `.env.local` as `PASSKEY_CLIENT_SECRET` (never in
-   code; the proxy reads it server-side only).
+   put it in the sample's `.env.local` as `ACCOUNT_CLIENT_SECRET` (the proxy also
+   accepts `PASSKEY_CLIENT_SECRET` for back-compat; never in code — the proxy
+   reads it server-side only).
 5. **Dev redirect URI**: add `https://auth.myservicetasdevpoc.ciamlogin.com:3000/`
    to the SPA platform's redirect URIs (the local passkey-registration origin).
 6. **MFA prerequisite**: users must complete MFA before registering a passkey —
@@ -146,7 +147,7 @@ cert, proxy). Docs: [Sign in with passkeys](https://learn.microsoft.com/en-us/en
 ### App-only Graph access (for the "My account" self-service page)
 
 The optional `/account` page changes the sign-in email and mobile number via
-Microsoft Graph through the local `account-proxy.mjs`. Those Graph APIs only accept
+Microsoft Graph through the local `local-proxy.mjs`. Those Graph APIs only accept
 **application** permissions (no delegated self-service exists for external-tenant
 customers), so on **this same SPA app registration**:
 

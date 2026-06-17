@@ -1,7 +1,7 @@
 import { accountApiBase } from "@/config/auth-config";
 
 /**
- * Client for the local account proxy (account-proxy.mjs). The proxy fronts the
+ * Client for the local proxy's account routes (local-proxy.mjs). The proxy fronts the
  * Microsoft Graph APIs that change a password, a sign-in email, or a mobile
  * authentication method — all of which need an app-only token, so the secret
  * and Graph token stay server-side.
@@ -52,7 +52,7 @@ async function callAccountApi(
         });
     } catch {
         throw new Error(
-            "Could not reach the account proxy. Start it with `npm run account-proxy` (see README, 'My account' section)."
+            "Could not reach the local proxy. Start it with `npm run proxy` (see README, 'My account' section)."
         );
     }
 

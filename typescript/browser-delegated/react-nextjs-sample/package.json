@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "dev:passkey": "next dev --turbopack --experimental-https --experimental-https-key ./certs/auth-key.pem --experimental-https-cert ./certs/auth-cert.pem",
-    "passkey-proxy": "node passkey-proxy.mjs",
-    "account-proxy": "node account-proxy.mjs",
+    "proxy": "node local-proxy.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint ."

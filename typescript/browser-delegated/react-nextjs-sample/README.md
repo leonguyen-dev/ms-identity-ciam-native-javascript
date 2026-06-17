@@ -36,12 +36,11 @@ React SPA  ◀──redirect back──  tokens in sessionStorage → claims vie
 | `src/app/page.tsx` | Branded home: sign-in/sign-up triggers when signed out; ID-token claims view when signed in. |
 | `src/app/reset-password/page.tsx` | Routes the user into the hosted flow's *Forgot password?* (SSPR). |
 | `src/app/security/page.tsx` | **Passkey management** — register / list / delete passkeys (FIDO2). |
-| `src/services/passkey-service.ts` | WebAuthn ceremony + client for the passkey proxy. |
-| `passkey-proxy.mjs` | Local server that fronts the Graph `fido2Methods` APIs (keeps the client secret + app-only token out of the browser). |
+| `src/services/passkey-service.ts` | WebAuthn ceremony + client for the local proxy's passkey routes. |
+| `local-proxy.mjs` | Local server fronting the app-only Graph APIs behind **both** the passkey and account pages (keeps the client secret + app-only token out of the browser). Serves `/api/passkeys/*` and `/api/account/*` on one port. |
 | `src/components/Navbar.tsx` | Sign In / Sign Up / Reset Password / Security / Sign Out, wired to MSAL redirect. |
 | `src/app/account/page.tsx` | Signed-in self-service page: change password / sign-in email / mobile number. |
-| `src/services/account-service.ts` | Client for the account proxy. |
-| `account-proxy.mjs` | Local app-only Graph proxy backing the account page (holds the client secret). |
+| `src/services/account-service.ts` | Client for the local proxy's account routes. |
 | `src/components/Navbar.tsx` | Sign In / Sign Up / Reset Password / My Account / Sign Out, wired to MSAL redirect. |
 | `entra-config/README.md` | **All the Entra portal + Graph setup** (user flow, custom attributes, extensions, CA/MFA, app registration, deployment). |
 | `entra-config/custom-ui.css` | Service Tasmania custom CSS for the hosted user-flow pages. |
@@ -61,9 +60,9 @@ React SPA  ◀──redirect back──  tokens in sessionStorage → claims vie
    redirected to the hosted Service Tasmania pages and returned signed in; the home
    page then shows the decoded ID-token claims (including the custom `phone_number`).
 
-No `cors.js` / proxy is required (that was a native-auth concern). The one
-exception is **passkey management**, which needs the local `passkey-proxy.mjs` —
-see below.
+No `cors.js` / proxy is required for sign-in (that was a native-auth concern).
+The **passkey** and **My account** self-service pages do need the local
+`local-proxy.mjs` (one server, run with `npm run proxy`) — see below.
 
 ## Passkeys (FIDO2)
 
@@ -73,7 +72,7 @@ offers *"Use your face, fingerprint, PIN or security key instead"* automatically
 after the user enters their email. What the app must provide is the **registration
 / management experience** (Microsoft ships no out-of-box UI yet): that's the
 **Security** page (`/security`), backed by the Graph beta `fido2Methods`
-provisioning APIs through `passkey-proxy.mjs`.
+provisioning APIs through `local-proxy.mjs` (`/api/passkeys/*`).
 
 ### Why the special local setup
 
@@ -115,18 +114,23 @@ and host the app under it.
    ```
 
    (`*.pem` is gitignored.)
-4. **Client secret**: create `.env.local` in this folder (gitignored):
+4. **Client secret**: create `.env.local` in this folder (gitignored). The proxy
+   accepts `ACCOUNT_CLIENT_SECRET` (shared with the My account page) or, for
+   back-compat, `PASSKEY_CLIENT_SECRET`:
 
    ```text
-   PASSKEY_CLIENT_SECRET=<secret from entra-config §7>
+   ACCOUNT_CLIENT_SECRET=<secret from entra-config §7>
    ```
 
 ### Run
 
 ```bash
-npm run passkey-proxy    # terminal 1 — Graph proxy on http://localhost:3001
+npm run proxy            # terminal 1 — Graph proxy on http://localhost:3001
 npm run dev:passkey      # terminal 2 — HTTPS dev server on port 3000
 ```
+
+(The proxy serves both the passkey and account routes, so the same
+`npm run proxy` covers the My account page below — no second proxy.)
 
 Open **`https://auth.myservicetasdevpoc.ciamlogin.com:3000`**, sign in, then go to
 **Security** in the navbar:
@@ -143,7 +147,7 @@ Open **`https://auth.myservicetasdevpoc.ciamlogin.com:3000`**, sign in, then go 
 
 ### Production notes
 
-- Don't ship `passkey-proxy.mjs` as-is: move the same four endpoints into a real
+- Don't ship `local-proxy.mjs` as-is: move the same endpoints into a real
   backend (e.g. the SWA's managed Functions) with the secret in Key Vault. The
   proxy already verifies the caller's ID token against the tenant JWKS and derives
   the Graph user id from it — keep that property.
@@ -151,8 +155,8 @@ Open **`https://auth.myservicetasdevpoc.ciamlogin.com:3000`**, sign in, then go 
   served under the same registrable domain.
 - Passkeys are **not** available to the native-auth sample: native auth APIs don't
   support passkeys yet (browser-delegated only).
-No `cors.js` / proxy is required for sign-in (that was a native-auth concern). The
-optional **My account** page does need a small local proxy — see below.
+The optional **My account** page uses the same local proxy (`npm run proxy`) as
+passkeys — see below.
 
 ## My account (change password / sign-in name / phone)
 
@@ -205,7 +209,7 @@ you*.
 >    `identities` (evaluated server-side, so it isn't masked) and patches on `beta`.
 
 Because the app secret and Graph token must never reach the browser,
-`account-proxy.mjs` runs locally (port 3001), verifies the signed-in user's ID
+`local-proxy.mjs` runs locally (port 3001; `/api/account/*` routes), verifies the signed-in user's ID
 token (signature/issuer/audience/tenant/expiry) against the tenant JWKS, derives
 the Graph user id from its `oid`, and only then calls Graph. Every mutation also
 requires a **fresh-MFA** token (the SPA requests it with an `ngcmfa` claims
@@ -237,8 +241,10 @@ challenge and redirects for MFA if it isn't recent), so a user can only ever cha
    ```
 3. In a second terminal, start the proxy alongside `npm run dev`:
    ```bash
-   npm run account-proxy
+   npm run proxy
    ```
+
+   (Same proxy as the Passkeys section — run it once and both pages work.)
 
 The **My Account** entry points only show on `localhost` by default — the deployed
 static export has no proxy to talk to. For production, host the same logic in an
