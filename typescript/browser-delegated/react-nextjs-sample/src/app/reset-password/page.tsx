@@ -62,7 +62,7 @@ export default function ResetPasswordPage() {
                     <ol style={styles.steps}>
                         <li>Enter your email address.</li>
                         <li>
-                            Select <strong>Forgot password?</strong>
+                            Select <strong>Forgot my password</strong>
                         </li>
                         <li>Verify your identity with the emailed code and choose a new password.</li>
                     </ol>
