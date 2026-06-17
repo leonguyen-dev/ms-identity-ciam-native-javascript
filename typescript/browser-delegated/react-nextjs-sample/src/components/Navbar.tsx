@@ -65,6 +65,9 @@ export default function Navbar() {
                 )}
                 {isAuthenticated && (
                     <>
+                        <Link href="/security" className={styles.link}>
+                            Security
+                        </Link>
                         {accountAvailable && (
                             <Link href="/account" className={styles.link}>
                                 My Account
