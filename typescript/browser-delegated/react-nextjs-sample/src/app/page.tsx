@@ -8,7 +8,15 @@ import {
     useMsal,
 } from "@azure/msal-react";
 import { InteractionRequiredAuthError, InteractionStatus } from "@azure/msal-browser";
-import { accountFeatureAvailable, loginRequest, signUpRequest } from "@/config/auth-config";
+import {
+    accountFeatureAvailable,
+    appLabel,
+    loginRequest,
+    signUpRequest,
+    peerAppUrl,
+    peerAppLabel,
+    signInHintFromClaims,
+} from "@/config/auth-config";
 
 const styles = {
     page: {
@@ -199,7 +207,7 @@ function SignedInView() {
         <main style={styles.page}>
             <div style={styles.hero}>
                 <div style={styles.heroInner}>
-                    <h1 style={styles.heroTitle}>Welcome to myServiceTas</h1>
+                    <h1 style={styles.heroTitle}>{`Welcome to ${appLabel}`}</h1>
                 </div>
             </div>
             <div style={styles.cardWrap}>
@@ -213,6 +221,23 @@ function SignedInView() {
                             <Link href="/account" style={{ ...styles.primaryButton, marginTop: "1.5rem" }}>
                                 Manage my account
                             </Link>
+                        )}
+
+                        {/* Cross-app SSO demo (Feature B / B1): hand off to a peer
+                            app on the same tenant. The `?sso=1` flag tells the peer
+                            to attempt a no-prompt sign-in; `login_hint` seeds its
+                            ssoSilent iframe with this user's email. */}
+                        {peerAppUrl && (
+                            <a
+                                href={`${peerAppUrl}/?sso=1${
+                                    signInHintFromClaims(claims)
+                                        ? `&login_hint=${encodeURIComponent(signInHintFromClaims(claims)!)}`
+                                        : ""
+                                }`}
+                                style={{ ...styles.primaryButton, marginTop: "1.5rem", marginLeft: accountAvailable ? "1rem" : 0 }}
+                            >
+                                {`Open ${peerAppLabel} (SSO)`}
+                            </a>
                         )}
 
                         {claims && (
@@ -257,7 +282,7 @@ function SignedOutView() {
         <main style={styles.page}>
             <div style={styles.hero}>
                 <div style={styles.heroInner}>
-                    <h1 style={styles.heroTitle}>Welcome to myServiceTas</h1>
+                    <h1 style={styles.heroTitle}>{`Welcome to ${appLabel}`}</h1>
                 </div>
             </div>
 

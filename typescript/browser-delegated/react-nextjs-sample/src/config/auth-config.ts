@@ -24,6 +24,32 @@ const TENANT_SUBDOMAIN = "myservicetasdevpoc";
 const TENANT_ID = "a67366e7-9873-4a38-9bae-0a4a18952688";
 
 /**
+ * The SPA client id. Defaults to the original browser-delegated POC app so App A
+ * runs unchanged, but can be overridden at build/dev time with
+ * NEXT_PUBLIC_CLIENT_ID. This is what lets the *same* codebase run as a second,
+ * distinct relying party ("App B") for the cross-app SSO spike (Feature B / B1):
+ * a different client id means a different app registration and a different
+ * sessionStorage cache, so a silent sign-in there proves true cross-app SSO
+ * rather than a shared MSAL cache.
+ */
+const CLIENT_ID =
+    process.env.NEXT_PUBLIC_CLIENT_ID ?? "5f0a52ca-f5db-4a6d-9b3a-3180d51fdd08";
+
+/**
+ * Human label for this instance (shown in the UI so you can tell App A from App
+ * B during the SSO demo). Cosmetic only.
+ */
+export const appLabel = process.env.NEXT_PUBLIC_APP_LABEL ?? "myServiceTas";
+
+/**
+ * The peer web app to offer a one-click "open in SSO" link to, if configured
+ * (e.g. App A points at App B's origin). Used only by the cross-app SSO demo
+ * link on the signed-in view; unset in normal single-app use.
+ */
+export const peerAppUrl = process.env.NEXT_PUBLIC_PEER_APP_URL;
+export const peerAppLabel = process.env.NEXT_PUBLIC_PEER_APP_LABEL ?? "Relying app";
+
+/**
  * Resolve the redirect/post-logout URI at runtime so one build works in both
  * local dev and the deployed SWA. Both values must be registered as SPA
  * redirect URIs on the app registration (see entra-config/README.md).
@@ -39,8 +65,9 @@ function resolveAppOrigin(): string {
 export const msalConfig: Configuration = {
     auth: {
         // SPA app registration created for the browser-delegated POC.
-        // Replace with the real client id (see entra-config/README.md, step 5).
-        clientId: "5f0a52ca-f5db-4a6d-9b3a-3180d51fdd08",
+        // Defaults to the original POC app id; override with NEXT_PUBLIC_CLIENT_ID
+        // to run this codebase as a second relying party (App B) for the SSO spike.
+        clientId: CLIENT_ID,
         authority: `https://${TENANT_SUBDOMAIN}.ciamlogin.com/${TENANT_ID}`,
         knownAuthorities: [`${TENANT_SUBDOMAIN}.ciamlogin.com`],
         redirectUri: `${resolveAppOrigin()}/`,
@@ -113,6 +140,30 @@ export const loginRequest: RedirectRequest = {
 export const signUpRequest: RedirectRequest = {
     ...loginRequest,
     prompt: "create",
+};
+
+/* ------------------------------------------------------------------------- *
+ * Cross-app SSO (Feature B / B1)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Scopes-only request for SILENT token acquisition — deliberately WITHOUT
+ * `prompt`. `loginRequest` carries `prompt: "login"`, which forces a fresh
+ * interactive sign-in and would defeat SSO; the silent paths must never send it.
+ *
+ * Used two ways by the SSO bootstrap (see auth/SsoBootstrap.tsx):
+ *  1. `ssoSilent({ ...silentRequest, loginHint })` — a hidden iframe to the
+ *     authorize endpoint. Succeeds only if the Entra session cookie is readable
+ *     in a third-party (iframe) context — which it is NOT on ciamlogin.com once
+ *     third-party cookies are blocked (Safari/iOS always; Chrome increasingly).
+ *  2. `{ ...silentRequest, prompt: "none" }` passed to a top-level
+ *     `loginRedirect` — the fallback. A full-page navigation makes the session
+ *     cookie first-party, so Entra can resolve the existing session and return a
+ *     token with no UI. Only fails (login_required) if there is truly no session,
+ *     at which point the app shows the normal Log in button.
+ */
+export const silentRequest = {
+    scopes: ["openid", "profile", "email", "offline_access"],
 };
 
 export const logoutRequest: EndSessionRequest = {};

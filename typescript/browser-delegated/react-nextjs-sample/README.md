@@ -252,6 +252,75 @@ Azure Function behind the Static Web App, keep the secret in Key Vault (or use a
 managed identity), and point the SPA at it by setting `NEXT_PUBLIC_ACCOUNT_API_BASE`
 at build time.
 
+## Cross-app SSO (Feature B / B1 — the `id_token_hint` replacement)
+
+B2C delivered cross-app SSO by minting an `id_token_hint`; External ID has **no
+such mechanism**. The supported replacement for web-to-web is the **shared Entra
+session** on the tenant: once the user has signed in to one web app, a second web
+app on the same tenant can obtain tokens **with no prompt**. This sample proves it
+by running the *same codebase twice* as two distinct relying parties.
+
+### How it works in the code
+
+- [`auth/SsoBootstrap.tsx`](./src/auth/SsoBootstrap.tsx) runs only when the app is
+  opened as an SSO target (the peer app links here with `?sso=1` and a
+  `login_hint`). It tries `ssoSilent` (hidden iframe), and on failure falls back to
+  a top-level `prompt=none` `loginRedirect`.
+- On **`ciamlogin.com`** the iframe path *fails by design* — the session cookie is
+  third-party inside the iframe and modern browsers block it — so the
+  `prompt=none` redirect (where the cookie is first-party) is what actually carries
+  the session. A **single custom URL domain** across all web apps is what makes the
+  iframe path work too; that's the production prerequisite (plan P0.1 / D3).
+- The signed-in view ([`app/page.tsx`](./src/app/page.tsx)) shows an **Open …
+  (SSO)** link when `NEXT_PUBLIC_PEER_APP_URL` is set, passing the user's email as
+  `login_hint`.
+- `prompt: "none"` never appears on the normal `loginRequest` (which keeps
+  `prompt: "login"`); the silent paths use the dedicated `silentRequest`.
+
+### Run two instances locally
+
+You need a **second SPA app registration** ("App B") on the same tenant, bound to
+the same user flow, with redirect URI `http://localhost:3002/`. Then run the app
+twice from this folder (PowerShell — env vars are set per session because npm
+scripts on Windows can't take inline `VAR=val`, and Next only auto-loads one
+`.env.local`):
+
+```powershell
+# Terminal 1 — App A (original client id) on :3000, linking to App B
+$env:NEXT_PUBLIC_PEER_APP_URL = "http://localhost:3002"
+$env:NEXT_PUBLIC_PEER_APP_LABEL = "App B"
+npm run dev    # serves http://localhost:3000
+
+# Terminal 2 — App B (second client id) on :3002
+$env:NEXT_PUBLIC_CLIENT_ID = "<APP_B_CLIENT_ID>"
+$env:NEXT_PUBLIC_APP_LABEL = "App B"
+$env:PORT = "3002"
+$env:NEXT_DIST_DIR = ".next-appB"   # separate build dir; Next won't run two dev servers sharing one
+npm run dev    # serves http://localhost:3002
+```
+
+`NEXT_DIST_DIR` is required on the second instance: Next refuses to run two dev
+servers from the same project folder because they'd share the `.next/dev` lock, so
+App B gets its own `.next-appB` (gitignored).
+
+(Different ports ⇒ different origins ⇒ separate MSAL `sessionStorage` caches, so a
+silent sign-in on App B proves *real* cross-app SSO, not a shared cache.)
+
+### Try it
+
+1. Open <http://localhost:3000> (App A) and **Log in**.
+2. On the signed-in view, click **Open App B (SSO)**.
+3. App B loads, runs the bootstrap, and lands you **signed in with no password /
+   MFA prompt** — its claims view renders the same user. That round-trip is the
+   `id_token_hint` replacement.
+4. **Browser matters:** on Chrome the `prompt=none` redirect succeeds silently; on
+   **Safari/iOS** the iframe path is dead (expected) but the redirect still works.
+   Record the per-browser result — it's the B1.5 finding.
+
+> Production needs the single custom URL domain (P0.1). For PlatesPlus/Power Pages,
+> the same shared-session model applies via Power Pages' built-in External ID OIDC
+> provider (plan B1.4) — not covered by this two-SPA spike.
+
 ## Deploy
 
 Static export (`output: "export"`) → Azure Static Web Apps, same as the native-auth
