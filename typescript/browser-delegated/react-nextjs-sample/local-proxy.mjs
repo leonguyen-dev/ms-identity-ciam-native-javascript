@@ -140,7 +140,7 @@ if (!CLIENT_SECRET) {
 
 // Azure Communication Services email — the transport for the new-email
 // verification OTP. Reuse the same connection string + sender the native-auth
-// otp-email-function uses (see typescript/native-auth/otp-email-function). When
+// otp-email-function uses (see typescript/azure-function-apps/otp-email-function). When
 // unset, the send-otp endpoint fails with a clear message rather than silently.
 const ACS_CONNECTION_STRING = process.env.COMMUNICATION_SERVICES_CONNECTION_STRING;
 const ACS_SENDER_ADDRESS = process.env.COMMUNICATION_SERVICES_SENDER_ADDRESS;

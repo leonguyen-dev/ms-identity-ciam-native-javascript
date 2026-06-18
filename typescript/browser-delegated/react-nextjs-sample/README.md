@@ -193,7 +193,7 @@ Before any of that, the user must **verify the new address**. Graph has no app-o
 API to send + check a code to an arbitrary email, so the proxy mints its own: the
 page first calls `…/signin-name/send-otp`, which emails a 6-digit code to the new
 address via Azure Communication Services (the same transport the native-auth
-[`otp-email-function`](../../native-auth/otp-email-function) uses) and stores a
+[`otp-email-function`](../../azure-function-apps/otp-email-function) uses) and stores a
 hash keyed by the caller's `oid`. The change endpoint then requires that code back,
 so a user can only point their sign-in email at a mailbox they actually control.
 Sending the code needs only a valid token; the change itself still needs fresh MFA

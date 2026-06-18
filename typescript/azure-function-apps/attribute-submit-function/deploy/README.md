@@ -33,7 +33,7 @@ Edit the parameters at the top of [`1-provision-and-deploy.ps1`](1-provision-and
 `ResourceGroup`/`Location` with `az functionapp list -o table`), then:
 
 ```powershell
-cd typescript/native-auth/attribute-submit-function/deploy
+cd typescript/azure-function-apps/attribute-submit-function/deploy
 ./1-provision-and-deploy.ps1
 ```
 

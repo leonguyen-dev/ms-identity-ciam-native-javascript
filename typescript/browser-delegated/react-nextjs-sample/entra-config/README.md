@@ -102,7 +102,7 @@ Entra ID → App registrations → New registration `ServiceTas Browser POC`:
 ### Claims-mapping policy (for the `phone_number` claim)
 
 Create the claims-mapping policy from
-`../../../native-auth/token-issuance-function/claims-mapping-policy.json` via Graph
+`../../../azure-function-apps/token-issuance-function/claims-mapping-policy.json` via Graph
 and assign it to **this SPA app's service principal**, and attach the
 `token-issuance-function` as the custom claims provider, so the MFA phone number is
 emitted as `phone_number`. (Same procedure as the native-auth POC — see that

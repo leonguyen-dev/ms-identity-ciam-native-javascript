@@ -129,8 +129,8 @@ Raw `AADSTS…` error codes are never shown to users — they are mapped to plai
 
 ## 4. Component 2 — OnOtpSend extension (`otp-email-function`)
 
-Location: [typescript/native-auth/otp-email-function/](typescript/native-auth/otp-email-function/)
-Main file: [src/functions/emailOtpSend.ts](typescript/native-auth/otp-email-function/src/functions/emailOtpSend.ts)
+Location: [typescript/azure-function-apps/otp-email-function/](typescript/azure-function-apps/otp-email-function/)
+Main file: [src/functions/emailOtpSend.ts](typescript/azure-function-apps/otp-email-function/src/functions/emailOtpSend.ts)
 
 ### 4.1 What it does
 
@@ -140,37 +140,37 @@ Entra generates the one-time passcode itself, then **calls this function with th
 
 ### 4.2 Branded email
 
-- Service Tasmania green banner (`#098851`), "Service Tasmania / TASMANIAN GOVERNMENT" footer, Nunito-with-fallback font, table-based inline-styled HTML for email-client compatibility. Both HTML and plain-text versions produced. Template: [src/emailTemplate.ts](typescript/native-auth/otp-email-function/src/emailTemplate.ts). Subject: *"myServiceTas account email verification code"*.
+- Service Tasmania green banner (`#098851`), "Service Tasmania / TASMANIAN GOVERNMENT" footer, Nunito-with-fallback font, table-based inline-styled HTML for email-client compatibility. Both HTML and plain-text versions produced. Template: [src/emailTemplate.ts](typescript/azure-function-apps/otp-email-function/src/emailTemplate.ts). Subject: *"myServiceTas account email verification code"*.
 - **Performance note worth mentioning:** Entra caps this callout at **~2 seconds**. The code uses ACS `beginSend()` and returns immediately (it does **not** wait for final delivery), so it never trips Entra's timeout (`CustomExtensionTimedOut`).
 
 ### 4.3 Email blocklist — the security feature (⚠️ note the recent change)
 
-The function enforces an **email/domain blocklist** ([src/emailBlocklist.ts](typescript/native-auth/otp-email-function/src/emailBlocklist.ts)) before sending. Lists come from app settings `BLOCKED_EMAILS` and `BLOCKED_DOMAINS` (comma-separated, case-insensitive; domain entries also match subdomains).
+The function enforces an **email/domain blocklist** ([src/emailBlocklist.ts](typescript/azure-function-apps/otp-email-function/src/emailBlocklist.ts)) before sending. Lists come from app settings `BLOCKED_EMAILS` and `BLOCKED_DOMAINS` (comma-separated, case-insensitive; domain entries also match subdomains).
 
 **Why this matters for native auth:** Entra never fires `OnAttributeCollectionStart` in native flows, so `OnOtpSend` is the **earliest server-side point** at which we can stop a blocked address — *before any code is even sent*.
 
 **Current behaviour (per the committed source today):**
 
 - A blocked email → function returns **HTTP 403** with the friendly reason and **does not send the OTP**, which fails the callout.
-- **It blocks on *any* OTP flow, not just sign-up.** The code was originally scoped to `requestType === "signUp"`, but native auth sends a different/empty `requestType`, so that guard let blocked sign-ups slip through. It now blocks blocklisted addresses across sign-in / reset / MFA too — which is the intended "banned address" behaviour. `requestType` is logged on every call for visibility. (See the comment block at the top of [emailOtpSend.ts](typescript/native-auth/otp-email-function/src/functions/emailOtpSend.ts).)
+- **It blocks on *any* OTP flow, not just sign-up.** The code was originally scoped to `requestType === "signUp"`, but native auth sends a different/empty `requestType`, so that guard let blocked sign-ups slip through. It now blocks blocklisted addresses across sign-in / reset / MFA too — which is the intended "banned address" behaviour. `requestType` is logged on every call for visibility. (See the comment block at the top of [emailOtpSend.ts](typescript/azure-function-apps/otp-email-function/src/functions/emailOtpSend.ts).)
 - `OnOtpSend` has **no `showBlockPage` action**, so the friendly message the user sees is rendered by the React client's own pre-`signUp()` check, not by Entra.
 
 > The same blocklist logic is intentionally **duplicated in three places** that must stay in sync: this function, the `attribute-start-function` (browser-flow guard), and the React client (instant UX). They're separate Node projects with no shared package.
 
 ### 4.4 Contracts, security, config
 
-- **Inbound payload** (`onOtpSendCalloutData`): `data.otpContext.{identifier, oneTimeCode}` + `data.authenticationContext.requestType`. Sample: [sample-payload.json](typescript/native-auth/otp-email-function/sample-payload.json).
+- **Inbound payload** (`onOtpSendCalloutData`): `data.otpContext.{identifier, oneTimeCode}` + `data.authenticationContext.requestType`. Sample: [sample-payload.json](typescript/azure-function-apps/otp-email-function/sample-payload.json).
 - **Success response:** HTTP 200 with action `microsoft.graph.OtpSend.continueWithDefaultBehavior`.
 - **Security:** protected by the Function App's built-in **Easy Auth** wired to the "Azure Functions authentication events API" app registration (validates Entra's bearer token); `authLevel: "function"` (system key) is a secondary factor, not the primary control.
 - **App settings:** `COMMUNICATION_SERVICES_CONNECTION_STRING`, `COMMUNICATION_SERVICES_SENDER_ADDRESS`, optional `MAIL_SENDER_DISPLAY_NAME` (default "myServiceTas"), `BLOCKED_EMAILS`, `BLOCKED_DOMAINS`.
-- **Runtime:** Node 22, Azure Functions **v4 programming model** (decorator-based, no `function.json`), TypeScript 5. Deps: `@azure/communication-email`, `@azure/functions`. Setup steps in [README.md](typescript/native-auth/otp-email-function/README.md).
+- **Runtime:** Node 22, Azure Functions **v4 programming model** (decorator-based, no `function.json`), TypeScript 5. Deps: `@azure/communication-email`, `@azure/functions`. Setup steps in [README.md](typescript/azure-function-apps/otp-email-function/README.md).
 
 ---
 
 ## 5. Component 3 — OnTokenIssuanceStart extension (`token-issuance-function`)
 
-Location: [typescript/native-auth/token-issuance-function/](typescript/native-auth/token-issuance-function/)
-Main files: [src/functions/tokenIssuanceStart.ts](typescript/native-auth/token-issuance-function/src/functions/tokenIssuanceStart.ts) · [src/graphClient.ts](typescript/native-auth/token-issuance-function/src/graphClient.ts) · [claims-mapping-policy.json](typescript/native-auth/token-issuance-function/claims-mapping-policy.json)
+Location: [typescript/azure-function-apps/token-issuance-function/](typescript/azure-function-apps/token-issuance-function/)
+Main files: [src/functions/tokenIssuanceStart.ts](typescript/azure-function-apps/token-issuance-function/src/functions/tokenIssuanceStart.ts) · [src/graphClient.ts](typescript/azure-function-apps/token-issuance-function/src/graphClient.ts) · [claims-mapping-policy.json](typescript/azure-function-apps/token-issuance-function/claims-mapping-policy.json)
 
 > ✅ **Freshly merged (PR #9 `onTokenIssuanceStart`).** This is the newest piece of the demo — the MFA-phone-number-in-the-token feature. The full TypeScript source, README, `package.json`/`host.json`, a `sample-payload.json`, and a ready-to-apply `claims-mapping-policy.json` are all committed. (`local.settings.json` exists on disk with secrets but is correctly **not** committed.)
 
@@ -178,11 +178,11 @@ Main files: [src/functions/tokenIssuanceStart.ts](typescript/native-auth/token-i
 
 When a user finishes authenticating and Entra is about to issue a token, it fires `OnTokenIssuanceStart`. This function calls **Microsoft Graph**, reads the user's **registered MFA phone number**, and returns it as a **custom claim** that gets embedded in the ID token — surfaced in the token as `phone_number`.
 
-**Why a function is needed at all (the key talking point):** the MFA phone number is stored in Entra's **authentication-methods store, not as a directory profile attribute**. The portal's "Attributes & Claims" mapping can only reach directory attributes, so it physically cannot surface the MFA phone. A custom extension calling Graph on-demand is the supported workaround. Source: [tokenIssuanceStart.ts](typescript/native-auth/token-issuance-function/src/functions/tokenIssuanceStart.ts).
+**Why a function is needed at all (the key talking point):** the MFA phone number is stored in Entra's **authentication-methods store, not as a directory profile attribute**. The portal's "Attributes & Claims" mapping can only reach directory attributes, so it physically cannot surface the MFA phone. A custom extension calling Graph on-demand is the supported workaround. Source: [tokenIssuanceStart.ts](typescript/azure-function-apps/token-issuance-function/src/functions/tokenIssuanceStart.ts).
 
 ### 5.2 How it gets the number
 
-- Reads the user id from the inbound payload (`data.authenticationContext.user.id`), then calls `GET https://graph.microsoft.com/v1.0/users/{id}/authentication/phoneMethods` (Graph app-only, scope `.default`), via [graphClient.ts](typescript/native-auth/token-issuance-function/src/graphClient.ts).
+- Reads the user id from the inbound payload (`data.authenticationContext.user.id`), then calls `GET https://graph.microsoft.com/v1.0/users/{id}/authentication/phoneMethods` (Graph app-only, scope `.default`), via [graphClient.ts](typescript/azure-function-apps/token-issuance-function/src/graphClient.ts).
 - **Picks the `phoneType === "mobile"` method, falling back to the first registered method**, and returns its `phoneNumber` (E.164).
 - **Credential flexibility:** uses `@azure/identity` — `ClientSecretCredential` locally (`GRAPH_CLIENT_ID`/`GRAPH_CLIENT_SECRET`/`GRAPH_TENANT_ID`) and `ManagedIdentityCredential` in Azure (system-assigned, or user-assigned via `GRAPH_MANAGED_IDENTITY_CLIENT_ID`). Credential cached per instance for warm-call speed.
 - **Required Graph permission:** `UserAuthenticationMethod.Read.All` (application permission, admin-consented). Note: app-role assignments to a *managed identity* must be done via Graph/PowerShell — the portal can't do it.
@@ -190,7 +190,7 @@ When a user finishes authenticating and Entra is about to issue a token, it fire
 ### 5.3 Contract, claims mapping, resilience
 
 - **Response:** action `microsoft.graph.tokenIssuanceStart.provideClaimsForToken` with `claims: { phoneNumber: "<E.164>" }`. Claim name configurable via `PHONE_CLAIM_ID` (default `phoneNumber`).
-- **Important — two halves to ship the claim:** returning the claim is *not enough*; an **application claims-mapping policy** must also be assigned to the app. The repo includes that policy at [claims-mapping-policy.json](typescript/native-auth/token-issuance-function/claims-mapping-policy.json): it maps the `CustomClaimsProvider` ID `phoneNumber` → JWT claim type **`phone_number`** (the ID match is case-sensitive and must equal `PHONE_CLAIM_ID`). It is applied to the app via Graph. Without it, the claim never appears in the token.
+- **Important — two halves to ship the claim:** returning the claim is *not enough*; an **application claims-mapping policy** must also be assigned to the app. The repo includes that policy at [claims-mapping-policy.json](typescript/azure-function-apps/token-issuance-function/claims-mapping-policy.json): it maps the `CustomClaimsProvider` ID `phoneNumber` → JWT claim type **`phone_number`** (the ID match is case-sensitive and must equal `PHONE_CLAIM_ID`). It is applied to the app via Graph. Without it, the claim never appears in the token.
 - **Graceful degradation:** no phone registered, or any Graph error → returns **empty claims and the token is still issued**. Sign-in never breaks because of this extension. Handler/Graph timings are logged to diagnose cold starts against Entra's ~2s budget (`CustomExtensionTimedOut` = error 1003005).
 - **Security:** same Easy Auth + bearer-token model as Component 2; `authLevel: "function"` as a secondary factor. Runtime is Node, Azure Functions **v4 programming model**, `@azure/functions` + `@azure/identity`.
 
@@ -209,7 +209,7 @@ When a user finishes authenticating and Entra is about to issue a token, it fire
 ## 7. Pre-demo checklist & known caveats
 
 - [ ] **Rotate / hide secrets.** `local.settings.json` in both functions holds real-looking secrets (ACS connection string; Graph client secret). They are git-ignored (good) but live on disk — **do not show these files on screen**, and rotate the Graph client secret after the demo. Production should use **managed identity** instead of a client secret.
-- [ ] **Confirm the claims-mapping policy is assigned** to the SPA app via Graph — use the committed [claims-mapping-policy.json](typescript/native-auth/token-issuance-function/claims-mapping-policy.json). Without it, the MFA phone claim won't appear in the token (§5.3). Verify by signing in and checking `phone_number` is present in the decoded claims.
+- [ ] **Confirm the claims-mapping policy is assigned** to the SPA app via Graph — use the committed [claims-mapping-policy.json](typescript/azure-function-apps/token-issuance-function/claims-mapping-policy.json). Without it, the MFA phone claim won't appear in the token (§5.3). Verify by signing in and checking `phone_number` is present in the decoded claims.
 - [ ] **Confirm the Graph app/identity has `UserAuthenticationMethod.Read.All`** (admin-consented), or the token-issuance function can't read the phone number.
 - [ ] **Both functions deployed & Easy Auth configured**, and the custom extensions registered/enabled in the Entra tenant.
 - [ ] **ACS sender domain verified** and `BLOCKED_EMAILS`/`BLOCKED_DOMAINS` set to whatever you want to demo as "blocked".
