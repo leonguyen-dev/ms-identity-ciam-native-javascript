@@ -117,6 +117,19 @@ export const signUpRequest: RedirectRequest = {
 
 export const logoutRequest: EndSessionRequest = {};
 
+/**
+ * Best value to pass as an Entra `login_hint` so the hosted sign-in / MFA page
+ * shows the user's email instead of the synthetic userPrincipalName
+ * (<GUID>@…onmicrosoft.com). Prefers the live `signin_email` custom claim, then
+ * the built-in `email`; deliberately skips `preferred_username`, which is often
+ * the UPN. Returns undefined when no email-shaped value is available (omit the
+ * hint rather than send a GUID).
+ */
+export function signInHintFromClaims(claims?: Record<string, unknown>): string | undefined {
+    const hint = (claims?.signin_email as string | undefined) ?? (claims?.email as string | undefined);
+    return hint && hint.includes("@") ? hint : undefined;
+}
+
 /* ------------------------------------------------------------------------- *
  * Passkeys (FIDO2)
  * ------------------------------------------------------------------------- */

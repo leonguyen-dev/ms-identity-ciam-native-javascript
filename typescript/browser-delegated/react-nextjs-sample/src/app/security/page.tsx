@@ -11,7 +11,7 @@ import {
     InteractionRequiredAuthError,
     InteractionStatus,
 } from "@azure/msal-browser";
-import { loginRequest, ngcmfaClaims, passkeyRpId } from "@/config/auth-config";
+import { loginRequest, ngcmfaClaims, passkeyRpId, signInHintFromClaims } from "@/config/auth-config";
 import {
     PasskeyInfo,
     createPasskeyCredential,
@@ -119,6 +119,20 @@ type PendingAction =
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * True when a silent-token failure means the session's backing credential is
+ * gone — i.e. the user deleted the passkey they were signed in with, so the
+ * refresh token references a key ID that no longer exists (AADSTS135010, suberror
+ * bad_token). This can't be recovered silently: the only fix is a fresh primary
+ * sign-in with another method (here, password + SMS). Distinct from a stale-MFA
+ * invalid_grant, where the session is still valid and only needs a fresh ngcmfa.
+ */
+function isRevokedCredentialError(error: unknown): boolean {
+    if (!(error instanceof AuthError)) return false;
+    const text = `${error.errorCode} ${error.errorMessage}`;
+    return text.includes("AADSTS135010") || text.includes("bad_token");
+}
+
 function bannerStyle(kind: NonNullable<Banner>["kind"]) {
     const variant =
         kind === "success"
@@ -186,15 +200,39 @@ function PasskeyManager() {
      */
     const getFreshMfaToken = useCallback(
         async (pendingAction: PendingAction): Promise<string | null> => {
+            const account = getAccount();
+            // Show the user's email (not the synthetic UPN) on the hosted page.
+            const loginHint = signInHintFromClaims(
+                account?.idTokenClaims as Record<string, unknown> | undefined
+            );
             const request = {
                 scopes: loginRequest.scopes,
                 claims: ngcmfaClaims,
-                account: getAccount(),
+                account,
+                ...(loginHint ? { loginHint } : {}),
             };
             try {
                 const result = await instance.acquireTokenSilent(request);
                 return result.idToken;
             } catch (error) {
+                // The user deleted the passkey backing this session — the refresh
+                // token is bound to a key that no longer exists and can't be
+                // silently renewed. Don't resume the pending passkey action;
+                // force a clean primary sign-in (password + SMS) instead.
+                if (isRevokedCredentialError(error)) {
+                    sessionStorage.removeItem(PENDING_ACTION_KEY);
+                    setBanner({
+                        kind: "info",
+                        text: "You were signed in with the passkey you just deleted, so you've been signed out. Redirecting you to sign in again — use your password and SMS code, then add a new passkey.",
+                    });
+                    await instance.loginRedirect({
+                        ...loginRequest,
+                        prompt: "login",
+                        ...(loginHint ? { loginHint } : {}),
+                    });
+                    return null; // navigation takes over
+                }
+
                 const needsInteraction =
                     error instanceof InteractionRequiredAuthError ||
                     (error instanceof AuthError && error.errorCode === "invalid_grant");
@@ -397,7 +435,16 @@ function PasskeyManager() {
                             ) : (
                                 <button
                                     style={styles.secondaryButton}
-                                    onClick={() => setPendingDelete(passkey)}
+                                    onClick={() => {
+                                        setPendingDelete(passkey);
+                                        // If this is the passkey the user signed in
+                                        // with, deleting it invalidates their session
+                                        // (AADSTS135010) — warn before they confirm.
+                                        setBanner({
+                                            kind: "warning",
+                                            text: "If you're currently signed in with this passkey, deleting it will sign you out and you'll need to sign in again (you can use your password and SMS code).",
+                                        });
+                                    }}
                                     disabled={busy}
                                 >
                                     Delete

@@ -12,7 +12,7 @@ import {
     InteractionStatus,
 } from "@azure/msal-browser";
 import Link from "next/link";
-import { loginRequest, ngcmfaClaims } from "@/config/auth-config";
+import { loginRequest, ngcmfaClaims, signInHintFromClaims } from "@/config/auth-config";
 import {
     AccountApiError,
     AccountSummary,
@@ -21,6 +21,7 @@ import {
     fetchAccountSummary,
     sendSignInNameOtp,
 } from "@/services/account-service";
+import { fetchPasskeys } from "@/services/passkey-service";
 
 const styles = {
     page: {
@@ -176,6 +177,13 @@ function AccountManager() {
     const [otpSent, setOtpSent] = useState(false);
     const [phone, setPhone] = useState("");
     const [dialCode, setDialCode] = useState("+61");
+    // Set after a successful sign-in email change when the user has at least one
+    // passkey. A passkey credential embeds the sign-in name from when it was
+    // registered, so changing the email leaves an existing passkey presenting the
+    // old address on a passwordless sign-in — re-registering it on the security
+    // page rebinds it to the new email. (The directory and token are already
+    // correct; this only cleans up the credential's embedded name.)
+    const [passkeyReminder, setPasskeyReminder] = useState(false);
 
     const getAccount = useCallback(
         () => instance.getActiveAccount() ?? instance.getAllAccounts()[0],
@@ -202,10 +210,16 @@ function AccountManager() {
                 kind: "info",
                 text: "To keep your account secure, you need to verify your identity (multi-factor authentication). Redirecting…",
             });
+            const account = getAccount();
+            const loginHint = signInHintFromClaims(
+                account?.idTokenClaims as Record<string, unknown> | undefined
+            );
             await instance.acquireTokenRedirect({
                 scopes: loginRequest.scopes,
                 claims: ngcmfaClaims,
-                account: getAccount(),
+                account,
+                // Show the email (not the synthetic UPN) on the hosted MFA page.
+                ...(loginHint ? { loginHint } : {}),
             });
         },
         [instance, getAccount]
@@ -279,6 +293,7 @@ function AccountManager() {
         async (action: ChangeKey, value: string, attempts = 0, code = "") => {
             setBusy(true);
             setBanner(null);
+            setPasskeyReminder(false);
             try {
                 const token = await getFreshMfaToken({ action, value, otp: code, attempts });
                 if (!token) return; // redirecting for MFA
@@ -295,6 +310,19 @@ function AccountManager() {
                 setOtpSent(false);
                 setPhone("");
                 setDialCode("+61");
+
+                // After a sign-in email change, remind the user to re-register any
+                // passkey so its embedded sign-in name follows the new email. Skip
+                // it for users with no passkeys (nothing to rebind). Best-effort —
+                // a failed list read just suppresses the reminder.
+                if (action === "signin") {
+                    try {
+                        const list = await fetchPasskeys(token);
+                        if (list.length > 0) setPasskeyReminder(true);
+                    } catch {
+                        // Don't let a passkey-list hiccup mask the success message.
+                    }
+                }
                 // The saved value is authoritative from the 200 response — show
                 // it directly rather than re-reading Graph, which can lag the
                 // write by a few seconds.
@@ -356,6 +384,7 @@ function AccountManager() {
 
     const toggle = (key: SectionKey) => {
         setBanner(null);
+        setPasskeyReminder(false);
         // Reset the email-change sub-flow whenever the section is opened/closed.
         setOtp("");
         setOtpSent(false);
@@ -405,6 +434,20 @@ function AccountManager() {
                         </p>
 
                         {banner && <div style={bannerStyle(banner.kind)}>{banner.text}</div>}
+
+                        {passkeyReminder && (
+                            <div style={bannerStyle("info")}>
+                                You sign in with a passkey. A passkey remembers the email it was
+                                created with, so until you re-register it, a passwordless passkey
+                                sign-in will still show your old address. To fix that, add a new
+                                passkey and remove the old one on the{" "}
+                                <Link href="/security" style={{ color: "#267151", fontWeight: 800 }}>
+                                    account security page
+                                </Link>
+                                . Because you&rsquo;re replacing the credential you sign in with, you
+                                may be asked to sign in again partway through — that&rsquo;s expected.
+                            </div>
+                        )}
 
                         {loading ? (
                             <p style={styles.sectionMeta}>Loading your account…</p>
