@@ -168,6 +168,37 @@ export const silentRequest = {
 
 export const logoutRequest: EndSessionRequest = {};
 
+/* ------------------------------------------------------------------------- *
+ * Native app → in-app web content (embedded webview) SSO (Feature B / B2)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Origin of the web resource shown inside the webview (the local proxy in dev;
+ * an Azure Function / web app in production via NEXT_PUBLIC_WEBVIEW_API_BASE).
+ * The demo page (app/webview/page.tsx) POSTs the signed-in user's token to
+ * `${webviewProxyBase}/api/webview/session` to establish an HttpOnly session
+ * cookie, then loads `${webviewProxyBase}/webview` in the iframe.
+ *
+ * NOTE this is the proxy ORIGIN (no `/api` suffix) because the webview content
+ * pages live at `/webview`, not `/api/webview`.
+ */
+export const webviewProxyBase =
+    process.env.NEXT_PUBLIC_WEBVIEW_API_BASE ?? "http://localhost:3001";
+
+/**
+ * Whether the webview SSO demo can work where the app is running. Like the
+ * account feature it needs the local proxy, so it only lights up on the dev
+ * hosts (plain `localhost` or the passkey rp domain) unless an explicit
+ * NEXT_PUBLIC_WEBVIEW_API_BASE is configured. Call from an effect, not render,
+ * to avoid a static-export hydration mismatch.
+ */
+export function webviewFeatureAvailable(): boolean {
+    if (process.env.NEXT_PUBLIC_WEBVIEW_API_BASE) return true;
+    if (typeof window === "undefined") return false;
+    const host = window.location.hostname;
+    return host === "localhost" || host === passkeyRpId || host.endsWith(`.${passkeyRpId}`);
+}
+
 /**
  * Best value to pass as an Entra `login_hint` so the hosted sign-in / MFA page
  * shows the user's email instead of the synthetic userPrincipalName

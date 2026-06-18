@@ -21,6 +21,12 @@
  *     POST /api/account/signin-name           change sign-in email (fresh MFA + OTP)
  *     POST /api/account/phone                 change mobile number (fresh MFA)
  *
+ *   Webview SSO (Feature B / B2 — native app → in-app web content):
+ *     POST /api/webview/session               validate the injected Bearer token →
+ *                                             set an HttpOnly session cookie
+ *     GET  /webview                           cookie-gated in-app web content
+ *     GET  /webview/profile                   second page (proves session persists)
+ *
  * (Previously two separate servers — passkey-proxy.mjs and account-proxy.mjs —
  * that both bound port 3001, so only one could run at a time. They share the same
  * token-verification + app-only-Graph machinery and their routes never overlap,
@@ -733,6 +739,174 @@ async function changePhone(oid, phoneNumber) {
     assertGraphOk(result, "Could not change your phone number.");
 }
 
+/* --------------------- webview SSO (Feature B / B2) ----------------------- */
+
+// Native app → in-app web content (embedded webview) SSO. Models the supported
+// pattern from
+// https://learn.microsoft.com/entra/identity-platform/how-to-native-authentication-webview-sso:
+//
+//   1. The native app acquires a token (here: the SPA's verified ID token).
+//   2. It injects `Authorization: Bearer <token>` into the webview's request
+//      (B2.2). A browser can't set headers on an <iframe> navigation, so the
+//      "native app shell" (src/app/webview/page.tsx) does the injection with a
+//      credentialed fetch to POST /api/webview/session — the one place the bearer
+//      is presented.
+//   3. This backend validates aud/iss/tid/sig/exp (B2.3 — the SAME verifyUserToken
+//      machinery every other route uses) and sets an HttpOnly session cookie.
+//   4. The webview then loads GET /webview, which is gated on that cookie alone —
+//      no token re-injection — so the session persists across navigation
+//      (GET /webview → GET /webview/profile) with no second prompt (B2.4).
+//
+// SameSite=Lax is sufficient here: the app (:3000) and this web resource (:3001)
+// are the SAME SITE (both `localhost`), so the cookie is first-party on the
+// iframe's requests and isn't affected by third-party-cookie blocking. In
+// production the app and the web resource live under one registrable domain
+// (the single custom URL domain, P0.1), which keeps that property; a genuinely
+// cross-site embed would need CHIPS/partitioned cookies instead.
+
+const WEBVIEW_COOKIE_NAME = "st_webview_session";
+const WEBVIEW_SESSION_TTL_SECONDS = 60 * 60;
+// Per-process signing key: a proxy restart invalidates live webview sessions
+// (the user simply reopens the demo), exactly like the in-memory OTP store.
+const webviewSessionKey = crypto.randomBytes(32);
+
+function makeWebviewCookie(claims) {
+    const exp = Math.floor(Date.now() / 1000) + WEBVIEW_SESSION_TTL_SECONDS;
+    const payload = Buffer.from(JSON.stringify({ ...claims, exp })).toString("base64url");
+    const sig = crypto.createHmac("sha256", webviewSessionKey).update(payload).digest("base64url");
+    return (
+        `${WEBVIEW_COOKIE_NAME}=${payload}.${sig}; HttpOnly; SameSite=Lax; Path=/; ` +
+        `Max-Age=${WEBVIEW_SESSION_TTL_SECONDS}`
+    );
+}
+
+/** Validate the signed session cookie; returns the claims or null. */
+function readWebviewCookie(req) {
+    const header = req.headers.cookie ?? "";
+    const cookie = header.split(/;\s*/).find((c) => c.startsWith(`${WEBVIEW_COOKIE_NAME}=`));
+    if (!cookie) return null;
+    const value = cookie.slice(WEBVIEW_COOKIE_NAME.length + 1);
+    const dot = value.lastIndexOf(".");
+    if (dot <= 0) return null;
+    const payload = value.slice(0, dot);
+    const sig = value.slice(dot + 1);
+    const expected = crypto.createHmac("sha256", webviewSessionKey).update(payload).digest("base64url");
+    const sigBuf = Buffer.from(sig);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+    let claims;
+    try {
+        claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    } catch {
+        return null;
+    }
+    if ((claims.exp ?? 0) < Math.floor(Date.now() / 1000)) return null;
+    return claims;
+}
+
+const escapeHtml = (s) =>
+    String(s).replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+    );
+
+/** Branded HTML shown inside the webview once the cookie is established. */
+function webviewContentHtml(session, { profile = false } = {}) {
+    const email = escapeHtml(session.email ?? session.oid ?? "unknown");
+    const heading = profile ? "Webview · Profile" : "Webview · Home";
+    const body = profile
+        ? `<p>This is a <strong>second page</strong> inside the webview. You navigated here
+             from the home page with <strong>no token re-injection</strong> — the request
+             carried only the <code>HttpOnly</code> session cookie set on the first load.
+             That is the "persist the session across navigation" guarantee (B2.3).</p>
+           <p><a href="/webview">&larr; Back to webview home</a></p>`
+        : `<p>You are signed in <strong>inside the embedded web content</strong> as
+             <strong>${email}</strong> — with <strong>no second prompt</strong>.</p>
+           <p>The native app shell acquired a token, injected it as a Bearer header on the
+             first request, and this backend exchanged it for an <code>HttpOnly</code>
+             session cookie (B2.2 / B2.3). Follow the link below to prove the session
+             persists across navigation without re-injecting the token:</p>
+           <p><a href="/webview/profile">Go to the profile page &rarr;</a></p>`;
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${heading}</title>
+  <style>
+    body { margin:0; font-family:'Nunito',-apple-system,'Segoe UI',Roboto,sans-serif; color:#292929; background:#ffffff; }
+    header { background:#098851; color:#fff; padding:1rem 1.5rem; font-size:1.125rem; font-weight:700; }
+    main { padding:1.5rem; line-height:1.6; }
+    code { background:#f0f0f0; padding:0.1rem 0.3rem; border-radius:0.2rem; }
+    a { color:#267151; font-weight:700; }
+    .badge { display:inline-block; background:#e6f4ec; color:#098851; font-weight:700; padding:0.25rem 0.6rem; border-radius:1rem; font-size:0.8125rem; }
+  </style>
+</head>
+<body>
+  <header>Service Tasmania — in-app web content</header>
+  <main>
+    <p><span class="badge">webview session active</span></p>
+    ${body}
+  </main>
+</body>
+</html>`;
+}
+
+/** Shown in the iframe when no valid session cookie is present. */
+function webviewUnauthedHtml() {
+    return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<style>body{margin:0;font-family:'Nunito',-apple-system,'Segoe UI',sans-serif;color:#292929;padding:1.5rem;line-height:1.6;}</style>
+</head><body>
+  <p>No webview session. The native app shell must establish one first
+     (POST <code>/api/webview/session</code> with a Bearer token).</p>
+</body></html>`;
+}
+
+/**
+ * Handle the webview SSO routes (Feature B / B2). Dispatched BEFORE the global
+ * Bearer-token gate because the content pages are loaded by an iframe navigation
+ * that carries only the session cookie, no Authorization header.
+ */
+async function handleWebview(req, res, route, url, corsHeaders) {
+    // B2.2 / B2.3: the native app shell presents its Bearer token here; we
+    // validate it and hand back an HttpOnly session cookie.
+    if (route === "POST /api/webview/session") {
+        try {
+            const user = await verifyUserToken(req);
+            const email = [user.signin_email, user.email, user.preferred_username].find(
+                (e) => typeof e === "string" && e.includes("@")
+            );
+            res.writeHead(200, {
+                "Content-Type": "application/json",
+                "Set-Cookie": makeWebviewCookie({ oid: user.oid, email, name: user.name ?? null }),
+                ...corsHeaders,
+            });
+            res.end(JSON.stringify({ ok: true, user: { email: email ?? null, name: user.name ?? null } }));
+        } catch (error) {
+            const status = error instanceof HttpError ? error.status : 500;
+            if (status === 500) console.error(error);
+            sendJson(res, status, { error: { message: error.message, code: error.code } }, corsHeaders);
+        }
+        return;
+    }
+
+    // B2.4: cookie-gated HTML content, loaded inside the iframe.
+    if (req.method === "GET" && (url.pathname === "/webview" || url.pathname === "/webview/profile")) {
+        const session = readWebviewCookie(req);
+        if (!session) {
+            res.writeHead(401, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(webviewUnauthedHtml());
+            return;
+        }
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(webviewContentHtml(session, { profile: url.pathname === "/webview/profile" }));
+        return;
+    }
+
+    res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+    res.end("<!doctype html><p>Not found.</p>");
+}
+
 /* ------------------------------ validation -------------------------------- */
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -765,6 +939,10 @@ function corsHeadersFor(req) {
     return {
         "Access-Control-Allow-Origin": allowOrigin,
         Vary: "Origin",
+        // Credentials are needed so the webview session fetch can have its
+        // Set-Cookie stored (credentials: "include"); requires an explicit
+        // origin, never "*" — which is why ALLOWED_ORIGINS is pinned above.
+        "Access-Control-Allow-Credentials": "true",
         "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
         "Access-Control-Max-Age": "86400",
@@ -808,6 +986,18 @@ http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${PORT}`);
     const route = `${req.method} ${url.pathname}`;
     console.log(`-> ${route}`);
+
+    // Webview SSO (Feature B / B2). Handled before the Bearer-token gate below:
+    // the content pages are an iframe navigation carrying only the session
+    // cookie, and the session endpoint runs its own token verification.
+    if (
+        url.pathname === "/api/webview/session" ||
+        url.pathname === "/webview" ||
+        url.pathname === "/webview/profile"
+    ) {
+        await handleWebview(req, res, route, url, corsHeaders);
+        return;
+    }
 
     try {
         const user = await verifyUserToken(req);
@@ -922,7 +1112,7 @@ http.createServer(async (req, res) => {
     // Loopback only — never expose an app-only Graph credential to the LAN.
 }).listen(PORT, "127.0.0.1", () => {
     console.log(`Local Graph proxy listening on http://localhost:${PORT}`);
-    console.log(`  passkeys: /api/passkeys   account: /api/account`);
+    console.log(`  passkeys: /api/passkeys   account: /api/account   webview: /webview`);
     console.log(`  CORS origins: ${[...ALLOWED_ORIGINS].join(", ")}`);
     console.log(`Graph user scope: tenant ${TENANT_SUBDOMAIN} (${TENANT_ID})`);
 });

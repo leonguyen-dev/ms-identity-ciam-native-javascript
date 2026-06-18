@@ -143,16 +143,23 @@ Covers myServiceTas website ↔ PlatesPlus/Power Pages and any other web app on 
 | B1.6 | Configure the **"Stay signed in"** experience via the Conditional Access persistent-browser-session control. | S |
 | B1.7 | 🔬 **Spike (1–2 days):** website ↔ Power Pages SSO end-to-end on the custom domain, including Safari. This validates the largest `id_token_hint` replacement. | 🔬 |
 
-### Phase B2 — Native app → in-app web content (embedded webview) 🟦
+### Phase B2 — Native app → in-app web content (embedded webview) ✅ **proven (POC)**
 
 Supported pattern for web content shown *inside* the app.
 
-| Step | Task | Effort |
-| --- | --- | --- |
-| B2.1 | Ensure the app and the web resource **share a client ID** and the app requests the **scopes the web resource needs**. | S |
-| B2.2 | App acquires an access token (native SDK) and injects `Authorization: Bearer <token>` into the webview's request. | M |
-| B2.3 | Web backend validates `aud`/`iss` and sets an `HttpOnly` session cookie to persist the session across navigation. | M |
-| B2.4 | 🔬 **Spike:** prove app→webview SSO with no second prompt. | 🔬 |
+> **POC result (2026-06-18):** proven in [react-nextjs-sample](typescript/browser-delegated/react-nextjs-sample/). The [`/webview`](typescript/browser-delegated/react-nextjs-sample/src/app/webview/page.tsx) page plays the **native app shell**; an embedded `<iframe>` is the webview; [local-proxy.mjs](typescript/browser-delegated/react-nextjs-sample/local-proxy.mjs) is the **web resource backend**. Shell acquires the user's token → POSTs it to `/api/webview/session` (one-time bearer injection) → proxy validates `aud`/`iss`/`tid`/sig/exp and sets an **`HttpOnly`** cookie → iframe loads `/webview` riding the cookie alone → navigation to `/webview/profile` carries only the cookie. Webview lands **signed in with no second prompt**.
+>
+> **Findings:**
+> 1. **Browser substitution for B2.2:** a browser can't set a header on an `<iframe>` navigation (a native SDK can), so the shell does the bearer injection via a credentialed `fetch` to the session endpoint, then loads the iframe. The backend logic (validate bearer → set `HttpOnly` cookie → serve from cookie) is identical to the real native case.
+> 2. **`SameSite=Lax` suffices** because the app (`:3000`) and the web resource (`:3001`) are the **same site** (both `localhost`) — the cookie is first-party on the iframe's requests, so third-party-cookie blocking is a non-issue. Production keeps this by hosting both under the **single custom URL domain** (P0.1); a genuinely cross-site embed would need partitioned cookies (CHIPS).
+> 3. **ID token vs access token:** the POC sends the **ID token** as the bearer (reuses the existing `verifyUserToken` path; matches the account/passkey pages; runnable with no extra Entra setup). Production would expose an **API scope** on the shared app registration and validate that **access token's** `aud` — same validation logic, which is the substance of B2.3.
+
+| Step | Task | Effort | Status |
+| --- | --- | --- | --- |
+| B2.1 | Ensure the app and the web resource **share a client ID** and the app requests the **scopes the web resource needs**. | S | ✅ shared client id; POC reuses ID-token aud (prod: API scope) |
+| B2.2 | App acquires an access token (native SDK) and injects `Authorization: Bearer <token>` into the webview's request. | M | ✅ shell injects bearer via credentialed fetch (browser stand-in for SDK) |
+| B2.3 | Web backend validates `aud`/`iss` and sets an `HttpOnly` session cookie to persist the session across navigation. | M | ✅ `POST /api/webview/session` → signed `HttpOnly` cookie; cookie-gated content pages |
+| B2.4 | 🔬 **Spike:** prove app→webview SSO with no second prompt. | 🔬 | ✅ iframe renders signed-in; `/webview/profile` proves cross-navigation persistence |
 
 ### Phase B3 — Native app → system browser / separate web app (the genuine gap)
 
@@ -203,7 +210,7 @@ Phase 0 (prereqs: custom domain, integration APIs, app regs)
 | M0 | Phase 0 complete | Custom domain live; integration APIs callable; decisions D1–D3 made |
 | M1 | Web↔web SSO proven (B1) | ✅ **two-SPA SSO proven on ciamlogin.com (2026-06-18)**; Power Pages (B1.4) + Safari/iOS (B1.5) still open |
 | M2 | TFS sign-up + provisioning (A1–A4) | New + existing TFS users provisioned; consent recorded |
-| M3 | App→web SSO resolved (B2/B3) | Webview path working and/or system-browser gap decided |
+| M3 | App→web SSO resolved (B2/B3) | ✅ **webview path proven (B2, 2026-06-18)**; system-browser gap (B3) still to confirm/decide |
 | M4 | Impersonation design signed off (B4) | Security review passed |
 
 ---

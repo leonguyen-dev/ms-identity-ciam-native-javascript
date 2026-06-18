@@ -41,6 +41,8 @@ React SPA  ◀──redirect back──  tokens in sessionStorage → claims vie
 | `src/components/Navbar.tsx` | Sign In / Sign Up / Reset Password / Security / Sign Out, wired to MSAL redirect. |
 | `src/app/account/page.tsx` | Signed-in self-service page: change password / sign-in email / mobile number. |
 | `src/services/account-service.ts` | Client for the local proxy's account routes. |
+| `src/app/webview/page.tsx` | **Native app → webview SSO demo** (Feature B / B2): acts as the native app shell, establishes an HttpOnly session on the web resource, and shows it in an embedded `<iframe>`. |
+| `src/services/webview-service.ts` | Client for the local proxy's webview session route. |
 | `src/components/Navbar.tsx` | Sign In / Sign Up / Reset Password / My Account / Sign Out, wired to MSAL redirect. |
 | `entra-config/README.md` | **All the Entra portal + Graph setup** (user flow, custom attributes, extensions, CA/MFA, app registration, deployment). |
 | `entra-config/custom-ui.css` | Service Tasmania custom CSS for the hosted user-flow pages. |
@@ -320,6 +322,72 @@ silent sign-in on App B proves *real* cross-app SSO, not a shared cache.)
 > Production needs the single custom URL domain (P0.1). For PlatesPlus/Power Pages,
 > the same shared-session model applies via Power Pages' built-in External ID OIDC
 > provider (plan B1.4) — not covered by this two-SPA spike.
+
+## Native app → webview SSO (Feature B / B2)
+
+The other half of replacing `id_token_hint`: when a **native app** shows **web
+content inside an embedded webview**, the supported pattern is *not* a minted
+hint token — the app passes its own session to the web content. Microsoft's
+guidance ([native auth → webview SSO](https://learn.microsoft.com/entra/identity-platform/how-to-native-authentication-webview-sso)):
+
+1. The app and the web resource **share a client id** and the app requests the
+   scopes the web resource needs (B2.1).
+2. The app acquires a token and injects `Authorization: Bearer <token>` onto the
+   webview's request (B2.2).
+3. The web backend **validates `aud`/`iss`** and sets an **`HttpOnly` session
+   cookie**, so the session persists across in-webview navigation (B2.3).
+
+### How this sample proves it
+
+This is a web sample, so the *same codebase* models the native app shell: the
+[`/webview`](./src/app/webview/page.tsx) page stands in for the app, and an
+embedded `<iframe>` is the webview. Because a browser can't set a header on an
+`<iframe>` navigation (the native SDK can), the shell does the one-time bearer
+injection with a credentialed `fetch`:
+
+```
+/webview page (native app shell)          local-proxy.mjs (web resource backend)
+  acquireTokenSilent() ─────────────────▶
+  POST /api/webview/session
+      Authorization: Bearer <token> ─────▶  verify aud/iss/tid/sig/exp
+                                            Set-Cookie: st_webview_session=…; HttpOnly
+  <iframe src="…/webview"> ──────────────▶  cookie-gated HTML, NO token re-injection
+       click "profile" ─────────────────▶  GET /webview/profile  (cookie only)
+```
+
+The proxy reuses the **exact `verifyUserToken` machinery** the passkey/account
+routes use (signature, issuer, audience, tenant, expiry against the tenant JWKS),
+then signs an HttpOnly cookie (HMAC, per-process key, 1 h TTL). The content pages
+(`GET /webview`, `GET /webview/profile`) are gated on that cookie alone — proving
+the session survives navigation with no second prompt (B2.4).
+
+**Cookie/site note:** `SameSite=Lax` is sufficient here because the app (`:3000`)
+and the web resource (`:3001`) are the **same site** (both `localhost`), so the
+cookie is first-party on the iframe's requests and untouched by third-party-cookie
+blocking. In production the app and the web resource sit under one registrable
+domain (the single custom URL domain, P0.1), keeping that property; a genuinely
+cross-site embed would need partitioned cookies (CHIPS).
+
+> **POC vs production:** this sample sends the **ID token** as the bearer (matching
+> the account/passkey pages, and keeping the demo runnable with no extra Entra
+> setup). A production app would expose an **API scope** (`api://<clientId>/…`) on
+> the shared app registration and validate that **access token's** `aud` instead —
+> the validation logic (aud/iss/tid/sig/exp) is identical, which is the point of
+> B2.3. Don't ship `local-proxy.mjs`: host the same `/api/webview/session` +
+> `/webview` logic in a real backend (e.g. the SWA's managed Functions).
+
+### Run it
+
+```bash
+npm run proxy   # terminal 1 — web resource backend on http://localhost:3001
+npm run dev     # terminal 2 — app on http://localhost:3000
+```
+
+Sign in, then open **Webview SSO** in the navbar (or go to
+<http://localhost:3000/webview>). The page acquires a token, establishes the
+session, and the embedded webview renders **signed in with no second prompt**.
+Click **Go to the profile page** inside the webview to confirm the session
+persists across navigation on the cookie alone.
 
 ## Deploy
 
