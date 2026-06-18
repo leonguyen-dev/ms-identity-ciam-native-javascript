@@ -161,15 +161,25 @@ Supported pattern for web content shown *inside* the app.
 | B2.3 | Web backend validates `aud`/`iss` and sets an `HttpOnly` session cookie to persist the session across navigation. | M | ✅ `POST /api/webview/session` → signed `HttpOnly` cookie; cookie-gated content pages |
 | B2.4 | 🔬 **Spike:** prove app→webview SSO with no second prompt. | 🔬 | ✅ iframe renders signed-in; `/webview/profile` proves cross-navigation persistence |
 
-### Phase B3 — Native app → system browser / separate web app (the genuine gap)
+### Phase B3 — Native app → system browser / separate web app (the genuine gap) ✅ **gap confirmed; interim (b) proven (POC)**
 
 This is the literal B2C `id_token_hint` flow. **Not currently supported** ("cross-app SSO through system browsers isn't supported with native authentication"; a generic solution is "planned for a future release").
 
-| Step | Task | Effort |
-| --- | --- | --- |
-| B3.1 | 🔬 Confirm the gap with a quick test and with **Microsoft** (account team / FastTrack); get the roadmap/timeline. | 🔬 |
-| B3.2 | Evaluate interim options: (a) make the app **browser-delegated** so it shares the browser session (web SSO becomes free); (b) one-tap interactive sign-in seeded with `login_hint`; (c) a custom session broker in the integration layer (**security review required** — this re-implements `id_token_hint` and won't yield an Entra token). | M |
-| B3.3 | Decide and document the interim approach (ties back to D1). | S |
+> **POC result (2026-06-18):** the gap is **confirmed** against current Microsoft Learn (B3.1) and **interim (b)** — `login_hint`-seeded interactive sign-in — is demonstrated in [react-nextjs-sample](typescript/browser-delegated/react-nextjs-sample/). The [`/handoff`](typescript/browser-delegated/react-nextjs-sample/src/app/handoff/page.tsx) page plays the native app shell; it links to a peer web app ("App B", the B1 two-instance setup) with `?handoff=1` + `login_hint`, and the target's [SsoBootstrap.tsx](typescript/browser-delegated/react-nextjs-sample/src/auth/SsoBootstrap.tsx) skips the silent paths and signs in interactively with the email pre-filled — one tap with a passkey.
+>
+> **Findings:**
+> 1. **Gap confirmed, current.** Three Microsoft Learn pages state it identically: native auth supports SSO for **embedded web views only**; "cross-app SSO through system browsers isn't supported with native authentication." ([supported features](https://learn.microsoft.com/entra/external-id/customers/concept-supported-features-customers#single-sign-on), [choose an approach](https://learn.microsoft.com/entra/external-id/customers/concept-choose-authentication-approach#feature-comparison), [native auth concept](https://learn.microsoft.com/entra/identity-platform/concept-native-authentication#single-sign-on-sso)). A generic solution is still listed as "planned." The only open part of B3.1 is the Microsoft account-team / FastTrack timeline — the *published* gap is unambiguous.
+> 2. **Root cause.** A native-auth app holds its tokens in-app, so the system browser it launches has **no `ciamlogin.com` session cookie**; a silent `prompt=none` returns `login_required` and there is no minted hint token to carry the session. This is the mirror image of B1, where the source *is* a cookie-sharing browser tab — which is why web↔web SSO works and native→system-browser can't.
+> 3. **A web sample can't fake a cold browser.** Any tab here shares the IdP cookie, so a silent request would actually succeed (that's literally B1). The demo therefore **forces** the interactive path (`loginRequest` carries `prompt: "login"`) to model the missing native session honestly — the same "browser stand-in" device B2 uses for header injection.
+> 4. **Interim (a) is the strategic answer.** Microsoft's own [Android MSAL cross-app SSO guidance](https://learn.microsoft.com/entra/msal/android/single-sign-on#sso-through-system-browser) confirms a **browser-delegated** app using the `BROWSER` agent shares the system cookie jar and gets cross-app SSO for free — i.e. interim (a) collapses B3 into B1. (b) is the fallback that keeps native auth's in-app UI.
+>
+> **Decision (B3.3):** ship interim **(b)** in the POC (keeps native auth, demonstrable today); recommend interim **(a) — browser-delegated — if app↔web SSO is a hard requirement** (ties back to D1). Interim (c) (custom session broker) is **not** pursued without a dedicated security review. Revisit when Microsoft's roadmap solution ships.
+
+| Step | Task | Effort | Status |
+| --- | --- | --- | --- |
+| B3.1 | 🔬 Confirm the gap with a quick test and with **Microsoft** (account team / FastTrack); get the roadmap/timeline. | 🔬 | ✅ confirmed vs Microsoft Learn (3 pages); account-team timeline still open |
+| B3.2 | Evaluate interim options: (a) make the app **browser-delegated** so it shares the browser session (web SSO becomes free); (b) one-tap interactive sign-in seeded with `login_hint`; (c) a custom session broker in the integration layer (**security review required** — this re-implements `id_token_hint` and won't yield an Entra token). | M | ✅ all three evaluated (decision above) |
+| B3.3 | Decide and document the interim approach (ties back to D1). | S | ✅ (b) shipped in POC; (a) recommended if app↔web SSO required |
 
 ### Phase B4 — Impersonation portal (RWVP)
 
@@ -210,7 +220,7 @@ Phase 0 (prereqs: custom domain, integration APIs, app regs)
 | M0 | Phase 0 complete | Custom domain live; integration APIs callable; decisions D1–D3 made |
 | M1 | Web↔web SSO proven (B1) | ✅ **two-SPA SSO proven on ciamlogin.com (2026-06-18)**; Power Pages (B1.4) + Safari/iOS (B1.5) still open |
 | M2 | TFS sign-up + provisioning (A1–A4) | New + existing TFS users provisioned; consent recorded |
-| M3 | App→web SSO resolved (B2/B3) | ✅ **webview path proven (B2, 2026-06-18)**; system-browser gap (B3) still to confirm/decide |
+| M3 | App→web SSO resolved (B2/B3) | ✅ **webview path proven (B2)**; ✅ **system-browser gap confirmed + interim (b) proven, (a) recommended (B3, 2026-06-18)** |
 | M4 | Impersonation design signed off (B4) | Security review passed |
 
 ---

@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useMsal, useIsAuthenticated } from "@azure/msal-react";
 import { EventType, InteractionStatus } from "@azure/msal-browser";
-import { silentRequest } from "@/config/auth-config";
+import { loginRequest, silentRequest } from "@/config/auth-config";
 
 /**
  * Cross-app SSO bootstrap (Feature B / B1 — the `id_token_hint` replacement).
@@ -21,6 +21,19 @@ import { silentRequest } from "@/config/auth-config";
  *      the session cookie first-party, so Entra resolves the existing session and
  *      returns a token with no UI. If there is genuinely no session it returns
  *      `login_required` and the user simply sees the normal Log in button.
+ *
+ * It also serves the Native app → system browser handoff (Feature B / B3). When
+ * opened with `?handoff=1` (+ a `login_hint`) it does NOT attempt the silent
+ * paths: a real native app holds its tokens in-app, not as a ciamlogin.com
+ * browser cookie, so the system browser it launches is cold and silent SSO is
+ * impossible — the documented platform gap ("cross-app SSO through system
+ * browsers isn't supported with native authentication"). Instead it goes
+ * straight to an INTERACTIVE sign-in seeded with the hint: the email is
+ * pre-filled, so with a registered passkey it is one tap. That is the chosen B3
+ * interim (plan B3.2 option b). Forcing interactive here (loginRequest carries
+ * prompt:"login") faithfully models that there is no session to silently resume
+ * — in this web sample the target tab would otherwise share the IdP cookie and
+ * resolve silently via the B1 path, which a real native app never can.
  *
  * Loop guard: msalConfig has `navigateToLoginRequestUrl: true`, so after a failed
  * prompt=none redirect MSAL returns to the ORIGINAL url — which still carries
@@ -68,27 +81,43 @@ export function SsoBootstrap() {
         if (handled.current) return;
 
         const params = new URLSearchParams(window.location.search);
+        const wantHandoff = params.has("handoff");
         const wantSso = params.has("sso") || params.has("login_hint");
-        if (!wantSso) return;
+        if (!wantHandoff && !wantSso) return;
 
         handled.current = true;
 
-        // Post-failure return: we already tried this SSO entry and came back still
-        // unauthenticated (login_required = no session). Stop — don't loop. Clear
-        // the marker and strip the SSO query so the page rests on the signed-out
-        // view; the user can sign in normally or click an SSO link again.
+        // Post-failure / re-entry return: we already tried this entry and came
+        // back still unauthenticated (login_required = no session on the SSO
+        // path, or the user cancelled the handoff sign-in). Stop — don't loop.
+        // Clear the marker and strip the SSO/handoff query so the page rests on
+        // the signed-out view; the user can sign in normally or click a link again.
         if (sessionStorage.getItem(SSO_ATTEMPT_KEY)) {
             sessionStorage.removeItem(SSO_ATTEMPT_KEY);
             const url = new URL(window.location.href);
             url.searchParams.delete("sso");
+            url.searchParams.delete("handoff");
             url.searchParams.delete("login_hint");
             window.history.replaceState({}, "", url.toString());
             return;
         }
 
-        // First attempt for this SSO entry.
+        // First attempt for this entry.
         sessionStorage.setItem(SSO_ATTEMPT_KEY, "1");
         const loginHint = params.get("login_hint") ?? undefined;
+
+        // Native app → system browser handoff (Feature B / B3). There is no
+        // shared session to resolve silently (the platform gap), so skip the
+        // silent paths entirely and do an INTERACTIVE sign-in seeded with the
+        // hint — the one-tap interim (plan B3.2 option b). loginRequest carries
+        // prompt:"login", which forces the hosted page even if this browser
+        // happens to hold a session, faithfully modelling the cold system
+        // browser a real native app launches. On return the isAuthenticated
+        // branch above clears the marker.
+        if (wantHandoff) {
+            instance.loginRedirect({ ...loginRequest, loginHint });
+            return;
+        }
 
         instance
             .ssoSilent({ ...silentRequest, loginHint })

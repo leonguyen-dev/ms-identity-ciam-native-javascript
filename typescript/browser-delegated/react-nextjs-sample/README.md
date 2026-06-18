@@ -389,6 +389,78 @@ session, and the embedded webview renders **signed in with no second prompt**.
 Click **Go to the profile page** inside the webview to confirm the session
 persists across navigation on the cookie alone.
 
+## Native app → system browser SSO (Feature B / B3 — the genuine gap)
+
+The last cross-app SSO scenario is the literal B2C `id_token_hint` flow — a
+native app handing its session to a **separate web app opened in the system
+browser** — and it is the one External ID does **not** support. Microsoft Learn
+states it plainly in three places ([supported features](https://learn.microsoft.com/entra/external-id/customers/concept-supported-features-customers#single-sign-on),
+[choose an approach](https://learn.microsoft.com/entra/external-id/customers/concept-choose-authentication-approach#feature-comparison),
+[native auth concept](https://learn.microsoft.com/entra/identity-platform/concept-native-authentication#single-sign-on-sso)):
+
+> Native authentication supports SSO for embedded web views **only**. Cross-app
+> SSO through system browsers isn't supported with native authentication.
+
+**Why it's a real gap.** A native-auth app holds its tokens *in the app* — there
+is no `ciamlogin.com` session cookie in any browser. So the system browser it
+launches is **cold**: a silent `prompt=none` request returns `login_required`,
+and there is no minted hint token to carry the session across. This is the exact
+opposite of B1 (web↔web), where the source *is* a browser tab sharing the IdP
+cookie, which is why the B1 silent path resolves and this one can't.
+
+### The chosen interim (plan B3.2 option b)
+
+Three interims were evaluated:
+
+| Option | What it is | Trade-off |
+|---|---|---|
+| **(a)** Make the app **browser-delegated** | Uses the system browser + shared cookie jar, so it gets **B1 web SSO for free** | The recommended direction **if app↔web SSO is a hard requirement** (decision D1); gives up native auth's in-app UI |
+| **(b)** Seeded **interactive** sign-in *(implemented here)* | Hand off with a `login_hint`; the web app signs in interactively with the email **pre-filled** → one tap with a passkey | Not silent SSO, but a big improvement over a cold start; keeps native auth |
+| **(c)** Custom **session broker** | Re-implement `id_token_hint` in the integration layer | **Security review required**; yields an *app* session, not an Entra token |
+
+This sample demonstrates **(b)**. The [`/handoff`](./src/app/handoff/page.tsx)
+page plays the native app shell; it builds a link to the separate web app
+carrying `?handoff=1` and the user's email as `login_hint`. The target app reads
+`?handoff=1` in [`auth/SsoBootstrap.tsx`](./src/auth/SsoBootstrap.tsx) and — unlike
+the B1 `?sso=1` path — **skips the silent attempts** and goes straight to an
+interactive `loginRedirect` seeded with the hint.
+
+> **Faithful-modelling note (like the B2 browser stand-in):** a web page can't
+> reproduce a *cold* browser — any tab here shares the IdP cookie, so a silent
+> request would actually succeed (that's literally B1). To model the missing
+> native session honestly, the handoff path forces the interactive flow
+> (`loginRequest` carries `prompt: "login"`). What you see — email pre-filled,
+> one tap to finish — is the real interim experience; what's elided is a silent
+> success that a genuine native→system-browser handoff never gets.
+
+### Try it
+
+Use the **same two-instance setup as B1** (App A on :3000, App B on :3002 — see
+"Run two instances locally" above), so the handoff target is a *separate* app
+with its own MSAL cache:
+
+1. In App A's terminal, point it at App B as the peer (App A already does this in
+   the B1 setup):
+   ```powershell
+   $env:NEXT_PUBLIC_PEER_APP_URL = "http://localhost:3002"
+   $env:NEXT_PUBLIC_PEER_APP_LABEL = "App B"
+   npm run dev
+   ```
+2. Sign in to App A, then open **System-browser SSO** in the navbar (or go to
+   <http://localhost:3000/handoff>).
+3. Click **Open App B in the system browser**. App B opens in a new tab, reads
+   the handoff hint, and shows its sign-in page **with the email already filled
+   in** — one tap (passkey / password) to finish. That seeded one-tap sign-in is
+   the B3 interim; the cold cross-app silent SSO it replaces is the platform gap.
+
+Without `NEXT_PUBLIC_PEER_APP_URL` set the page still documents the gap and the
+interim, but the handoff button is disabled (there's no separate app to open).
+
+> **Roadmap (B3.1):** Microsoft lists a generic native→system-browser SSO
+> solution as "planned for a future release." Until it lands, prefer interim (a)
+> (browser-delegated) when app↔web SSO matters, with (b) as the native-auth
+> fallback. Confirm the timeline with your Microsoft account team / FastTrack.
+
 ## Deploy
 
 Static export (`output: "export"`) → Azure Static Web Apps, same as the native-auth

@@ -83,6 +83,9 @@ export default function Navbar() {
                                 Webview SSO
                             </Link>
                         )}
+                        <Link href="/handoff" className={styles.link}>
+                            System-browser SSO
+                        </Link>
                         <button className={styles.link} onClick={handleSignOut} disabled={busy}>
                             Sign Out
                         </button>
