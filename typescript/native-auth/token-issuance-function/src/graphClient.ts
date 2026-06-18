@@ -112,3 +112,55 @@ export async function getUserMfaPhoneNumber(
     const mobile = methods.find((m) => m.phoneType === "mobile");
     return (mobile ?? methods[0])?.phoneNumber;
 }
+
+// Slice of the user profile we read for the current sign-in email.
+interface UserProfileResponse {
+    mail?: string | null;
+    otherMails?: string[];
+}
+
+/**
+ * Returns the user's current directory email (the `mail` profile attribute,
+ * falling back to the first `otherMails` entry), or undefined if neither is set.
+ *
+ * Why this exists: the built-in `email`/`preferred_username` claims are derived
+ * from the *credential the user authenticated with*, so they go stale when the
+ * sign-in email is changed but an older credential (e.g. a passkey registered
+ * against the previous email) is then used to sign in. Reading the directory
+ * here by `oid` is authentication-method independent, so the emitted claim is
+ * the same value regardless of how the user signed in. The account self-service
+ * proxy keeps `mail`/`otherMails` in sync on every sign-in email change.
+ *
+ * Single fast property read (`$select=mail,otherMails`) to stay well inside
+ * Entra's ~2s callout budget. `signal` bounds it; the caller treats an abort or
+ * error as "no claim" rather than failing the sign-in. Note `mail` can be null
+ * for an account whose email was never changed through the proxy — the client
+ * falls back to the built-in claims, which are correct in that case.
+ */
+export async function getUserSignInEmail(
+    userId: string,
+    log?: (message: string) => void,
+    signal?: AbortSignal
+): Promise<string | undefined> {
+    const tokenStart = Date.now();
+    const token = await getCredential().getToken(GRAPH_SCOPE, { abortSignal: signal });
+    log?.(`Graph token acquired in ${Date.now() - tokenStart}ms.`);
+    if (!token) {
+        throw new Error("Failed to acquire a Microsoft Graph access token.");
+    }
+
+    const callStart = Date.now();
+    const response = await fetch(
+        `${GRAPH_BASE}/users/${encodeURIComponent(userId)}?$select=mail,otherMails`,
+        { headers: { Authorization: `Bearer ${token.token}` }, signal }
+    );
+    log?.(`Graph user profile call returned ${response.status} in ${Date.now() - callStart}ms.`);
+
+    if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(`Graph user profile call failed (${response.status}): ${body}`);
+    }
+
+    const data = (await response.json()) as UserProfileResponse;
+    return data.mail ?? data.otherMails?.[0] ?? undefined;
+}

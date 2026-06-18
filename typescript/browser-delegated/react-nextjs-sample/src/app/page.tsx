@@ -173,11 +173,15 @@ function SignedInView() {
         return String(value);
     };
 
-    // Prefer the `email` claim (sourced from the user's mail attribute, stable
-    // across auth methods) over MSAL's account.username, which comes from the
-    // mutable `preferred_username` — a passkey sign-in returns the synthetic UPN
-    // (<GUID>@…onmicrosoft.com) there instead of the email.
+    // Prefer `signin_email` — a custom claim emitted by the OnTokenIssuanceStart
+    // function, read live from the directory `mail` by oid, so it is the same
+    // value no matter which credential signed in. The built-in `email` and
+    // `preferred_username` claims are derived from the authenticating credential,
+    // so they go stale after a sign-in email change when an older passkey is used
+    // (preferred_username then shows the synthetic <GUID>@…onmicrosoft.com UPN).
+    // Falls back to the built-in claims for accounts whose `mail` isn't set yet.
     const displayName =
+        (claims?.signin_email as string | undefined) ??
         (claims?.email as string | undefined) ??
         (claims?.preferred_username as string | undefined) ??
         account?.username ??

@@ -7,6 +7,11 @@
         "Source": "CustomClaimsProvider",
         "ID": "phoneNumber",
         "JwtClaimType": "phone_number"
+      },
+      {
+        "Source": "CustomClaimsProvider",
+        "ID": "signInEmail",
+        "JwtClaimType": "signin_email"
       }
     ]
   }
