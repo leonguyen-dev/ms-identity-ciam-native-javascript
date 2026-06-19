@@ -43,6 +43,8 @@ React SPA  ◀──redirect back──  tokens in sessionStorage → claims vie
 | `src/services/account-service.ts` | Client for the local proxy's account routes. |
 | `src/app/webview/page.tsx` | **Native app → webview SSO demo** (Feature B / B2): acts as the native app shell, establishes an HttpOnly session on the web resource, and shows it in an embedded `<iframe>`. |
 | `src/services/webview-service.ts` | Client for the local proxy's webview session route. |
+| `src/app/impersonate/page.tsx` | **Impersonation portal (RWVP)** (Feature B / B4): RBAC-gated admin tool that mints a read-only app-layer impersonation session and shows the customer's view. |
+| `src/services/impersonation-service.ts` | Client for the local proxy's impersonation routes. |
 | `src/components/Navbar.tsx` | Sign In / Sign Up / Reset Password / My Account / Sign Out, wired to MSAL redirect. |
 | `entra-config/README.md` | **All the Entra portal + Graph setup** (user flow, custom attributes, extensions, CA/MFA, app registration, deployment). |
 | `entra-config/custom-ui.css` | Service Tasmania custom CSS for the hosted user-flow pages. |
@@ -460,6 +462,68 @@ interim, but the handoff button is disabled (there's no separate app to open).
 > solution as "planned for a future release." Until it lands, prefer interim (a)
 > (browser-delegated) when app↔web SSO matters, with (b) as the native-auth
 > fallback. Confirm the timeline with your Microsoft account team / FastTrack.
+
+## Impersonation portal — RWVP (Feature B / B4)
+
+The hardest cross-app scenario, and the one External ID has **no native IdP pattern** for. B2C's
+RWVP impersonation portal minted an `id_token_hint` *as the customer*; External ID has **no supported
+way to mint any token as another customer** (no `id_token_hint`, no token-exchange for external
+tenants — confirmed against Microsoft Learn). So impersonation is built where it must live: at the
+**application/session layer**, owned by the portal backend, never the IdP.
+
+An RBAC-gated admin enters a customer's email + a justification; the backend verifies the admin's
+token, checks the admin allow-list, confirms the customer exists via Graph, and mints a short-lived,
+read-only, `HttpOnly` **app** session — *not* an Entra token — that records **both** the acting admin
+(`act`) and the subject (`sub`), per RFC 8693 actor semantics. The portal then renders the customer's
+view in an embedded iframe and exposes live-session + audit panels with revoke.
+
+The full design + security review (the plan's B4.1/B4.2 deliverable) is in
+[`impersonation-portal-design.md`](../../../impersonation-portal-design.md). Security controls baked
+into the POC: RBAC allow-list, separation of duties (no self-impersonation; the session never
+elevates the admin's own rights), least privilege (read-only), bounded 15-minute TTL, server-side
+**revocation** (an active-session registry, not just cookie expiry), and an append-only **audit log**
+with a required justification.
+
+```
+/impersonate (admin portal)             local-proxy.mjs (portal backend)
+  POST /api/impersonation/start
+      Authorization: Bearer <admin token>
+      { subjectEmail, reason } ────────▶  verify admin token → RBAC gate → confirm subject (Graph)
+                                          → mint signed HttpOnly app session (act + sub, read-only, 15m)
+                                          Set-Cookie: st_impersonation_session=…; HttpOnly
+  <iframe src="/impersonate-view"> ─────▶  cookie-gated customer view (red banner: who / as-whom / expiry)
+  Stop / Revoke / Audit ────────────────▶  registry delete + append-only audit log
+```
+
+> **POC vs production:** state (registry + audit) is in-memory — a restart is fail-closed for live
+> sessions but loses audit history. Don't ship `local-proxy.mjs`: move the endpoints into a real
+> backend, source admin rights from an **app role** or **PIM-eligible group** (JIT-activated), persist
+> the audit immutably (Azure Monitor / SIEM), and put both web properties under one custom URL domain.
+> The remaining open items before a production commit are in the design doc (§7).
+
+### Run it
+
+```bash
+npm run proxy   # terminal 1 — portal backend on http://localhost:3001
+npm run dev     # terminal 2 — app on http://localhost:3000
+```
+
+Grant yourself admin rights for the demo (the RBAC gate is enforced server-side). In the gitignored
+`.env.local`, either add your email or open the gate for local dev:
+
+```text
+IMPERSONATION_ADMIN_EMAILS=you@example.com
+# …or, DEV ONLY — treat every signed-in user as an admin:
+IMPERSONATION_ALLOW_ANY_ADMIN=true
+```
+
+Sign in, then open **Impersonation** in the navbar (or go to <http://localhost:3000/impersonate>).
+Enter a customer's email and a justification, and **Start impersonation** — the embedded view renders
+the customer's portal with a red impersonation banner. Use **Stop impersonating** to end it, or the
+**Revoke** buttons in the audit panel to cut off any live session. If your account isn't allow-listed
+the portal shows the RBAC-denied state (the gate working as designed). The subject must be a real
+customer account on the tenant (the backend confirms via Graph using the same app-only permissions the
+account page uses).
 
 ## Deploy
 

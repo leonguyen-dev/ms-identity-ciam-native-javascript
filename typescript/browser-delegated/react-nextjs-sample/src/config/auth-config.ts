@@ -213,6 +213,44 @@ export function signInHintFromClaims(claims?: Record<string, unknown>): string |
 }
 
 /* ------------------------------------------------------------------------- *
+ * Impersonation portal — RWVP (Feature B / B4)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Base URL of the impersonation portal backend (local-proxy.mjs locally; an Azure
+ * Function in production via NEXT_PUBLIC_IMPERSONATION_API_BASE). External ID has
+ * no supported way to mint a token AS another customer, so impersonation lives at
+ * the app/session layer: an RBAC-gated admin action mints a signed HttpOnly *app*
+ * session (not an Entra token) marked with both the acting admin and the subject.
+ * The backend enforces the admin allow-list, the read-only scope, the bounded TTL,
+ * revocation, and the audit log (plan B4.1/B4.2). Includes the `/api` suffix.
+ */
+export const impersonationApiBase =
+    process.env.NEXT_PUBLIC_IMPERSONATION_API_BASE ?? "http://localhost:3001/api";
+
+/**
+ * Origin of the impersonated-view content pages (`/impersonate-view`), shown in the
+ * portal's embedded iframe. Proxy ORIGIN (no `/api`) because those pages live at
+ * `/impersonate-view`, not under `/api`.
+ */
+export const impersonationViewBase =
+    process.env.NEXT_PUBLIC_IMPERSONATION_VIEW_BASE ?? "http://localhost:3001";
+
+/**
+ * Whether the impersonation portal can work where the app is running. Like the
+ * account/webview features it needs the local proxy, so it only lights up on the
+ * dev hosts unless an explicit NEXT_PUBLIC_IMPERSONATION_API_BASE is set. The
+ * RBAC gate is enforced server-side regardless — a signed-in non-admin sees the
+ * link but gets a 403 (and the portal explains the gate). Call from an effect.
+ */
+export function impersonationFeatureAvailable(): boolean {
+    if (process.env.NEXT_PUBLIC_IMPERSONATION_API_BASE) return true;
+    if (typeof window === "undefined") return false;
+    const host = window.location.hostname;
+    return host === "localhost" || host === passkeyRpId || host.endsWith(`.${passkeyRpId}`);
+}
+
+/* ------------------------------------------------------------------------- *
  * Passkeys (FIDO2)
  * ------------------------------------------------------------------------- */
 

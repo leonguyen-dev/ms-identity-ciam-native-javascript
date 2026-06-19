@@ -181,22 +181,57 @@ This is the literal B2C `id_token_hint` flow. **Not currently supported** ("cros
 | B3.2 | Evaluate interim options: (a) make the app **browser-delegated** so it shares the browser session (web SSO becomes free); (b) one-tap interactive sign-in seeded with `login_hint`; (c) a custom session broker in the integration layer (**security review required** — this re-implements `id_token_hint` and won't yield an Entra token). | M | ✅ all three evaluated (decision above) |
 | B3.3 | Decide and document the interim approach (ties back to D1). | S | ✅ (b) shipped in POC; (a) recommended if app↔web SSO required |
 
-### Phase B4 — Impersonation portal (RWVP)
+### Phase B4 — Impersonation portal (RWVP) ✅ **design agreed; app-layer POC proven (POC)**
 
 Hardest and most security-sensitive; no native IdP pattern.
 
-| Step | Task | Effort |
-| --- | --- | --- |
-| B4.1 | Design impersonation at the **application/session layer**: an RBAC-gated admin action mints an impersonation session in the portal backend (not via the IdP). | L |
-| B4.2 | **Security review**: audit logging, scope/duration of impersonation, revocation, separation of duties. | M |
-| B4.3 | Engage Microsoft on any supported CIAM impersonation pattern before committing. | S |
+> **POC result (2026-06-18):** the full design + security review is in
+> [impersonation-portal-design.md](impersonation-portal-design.md), and an app-layer POC ships in
+> [react-nextjs-sample](typescript/browser-delegated/react-nextjs-sample/): an RBAC-gated
+> [`/impersonate`](typescript/browser-delegated/react-nextjs-sample/src/app/impersonate/page.tsx)
+> portal backed by `/api/impersonation/*` routes in
+> [local-proxy.mjs](typescript/browser-delegated/react-nextjs-sample/local-proxy.mjs). An allow-listed
+> admin enters a customer email + justification → the backend verifies the admin's token, confirms the
+> customer via Graph, and mints a short-lived, read-only, `HttpOnly` **app** session (not an Entra
+> token) recording both the acting admin and the subject; the portal renders the customer's view in an
+> embedded iframe and exposes live-session + audit panels with revoke.
+>
+> **Findings:**
+> 1. **Categorically different from B1–B3.** Those reuse the *real user's own* session; impersonation
+>    needs a session as **someone else**, and External ID has **no supported way to mint any token as
+>    another customer** (no `id_token_hint`, no token-exchange/RFC 8693 for external tenants). So
+>    impersonation can only live at the **application/session layer** (B4.1) — the IdP authenticates
+>    the *admin* normally; impersonation is layered on top.
+> 2. **B4.3 — no published CIAM pattern (confirmed vs Microsoft Learn).** External ID documents only
+>    *customer* and *admin* accounts, where "admin" administers the **directory** (create/reset/block
+>    customers), not a way to authenticate **as** a customer into an app. Mirror B3.1: treat as
+>    current, confirm timeline with the Microsoft account team / FastTrack before a prod build.
+> 3. **The session is an *app* construct, not a token.** It carries `act` (admin) + `sub` (customer)
+>    per RFC 8693 actor semantics, so every action is attributable; it's revocable server-side (a JWT
+>    isn't); and it can't be replayed against Graph/Entra APIs (it isn't an Entra token). This is also
+>    the dedicated security review the plan flagged for B3.2 interim **(c)** — kept app-session-only.
+> 4. **Reuses proven machinery.** Same `verifyUserToken` (JWKS) + signed-`HttpOnly`-cookie pattern as
+>    B2 (webview); the only new surface is the RBAC gate, the actor/subject model, the revocation
+>    registry, and the audit log — exactly the B4.2 controls.
+>
+> **Decision (B4.2):** controls implemented in the POC (RBAC allow-list, separation of duties /
+> no-self-impersonation, read-only scope, 15-min TTL, server-side revocation, append-only audit with
+> required justification); a **production build remains gated** on the open items in
+> [impersonation-portal-design.md §7](impersonation-portal-design.md) (durable/immutable audit, app-role
+> or PIM-eligible admin source, custom domain, security sign-off).
+
+| Step | Task | Effort | Status |
+| --- | --- | --- | --- |
+| B4.1 | Design impersonation at the **application/session layer**: an RBAC-gated admin action mints an impersonation session in the portal backend (not via the IdP). | L | ✅ designed + POC ([design](impersonation-portal-design.md) §2) |
+| B4.2 | **Security review**: audit logging, scope/duration of impersonation, revocation, separation of duties. | M | ✅ review + checklist ([design](impersonation-portal-design.md) §3); controls in POC; prod sign-off open |
+| B4.3 | Engage Microsoft on any supported CIAM impersonation pattern before committing. | S | ✅ no published pattern (Microsoft Learn); confirm timeline w/ account team |
 
 **Feature B — definition of done (POC):**
 
 - Sign into the website, open Power Pages (PlatesPlus) in the same browser → **no second sign-in** (incl. a documented Safari/iOS result).
 - (If app uses webview) app→webview shows web content with no second prompt.
 - The app→system-browser gap is **confirmed and documented**, with a chosen interim approach.
-- RWVP impersonation has an **agreed design + security sign-off** (build may be post-POC).
+- RWVP impersonation has an **agreed design + security sign-off** (build may be post-POC). ✅ **design agreed + app-layer POC proven (B4, 2026-06-18)**; production sign-off open ([design §7](impersonation-portal-design.md)).
 
 ---
 
@@ -221,7 +256,7 @@ Phase 0 (prereqs: custom domain, integration APIs, app regs)
 | M1 | Web↔web SSO proven (B1) | ✅ **two-SPA SSO proven on ciamlogin.com (2026-06-18)**; Power Pages (B1.4) + Safari/iOS (B1.5) still open |
 | M2 | TFS sign-up + provisioning (A1–A4) | New + existing TFS users provisioned; consent recorded |
 | M3 | App→web SSO resolved (B2/B3) | ✅ **webview path proven (B2)**; ✅ **system-browser gap confirmed + interim (b) proven, (a) recommended (B3, 2026-06-18)** |
-| M4 | Impersonation design signed off (B4) | Security review passed |
+| M4 | Impersonation design signed off (B4) | ✅ **design agreed + app-layer POC proven (B4, 2026-06-18)** ([design](impersonation-portal-design.md)); production security sign-off open (design §7) |
 
 ---
 

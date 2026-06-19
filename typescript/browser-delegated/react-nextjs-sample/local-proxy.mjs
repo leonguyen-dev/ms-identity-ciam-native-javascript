@@ -907,6 +907,436 @@ async function handleWebview(req, res, route, url, corsHeaders) {
     res.end("<!doctype html><p>Not found.</p>");
 }
 
+/* ----------------- impersonation portal — RWVP (Feature B / B4) ----------- */
+
+// Admin "sign in as a customer" support portal. This is the hardest, most
+// security-sensitive cross-app scenario and the one External ID has NO native
+// IdP pattern for: there is no supported way to mint an Entra token *as* another
+// customer (the B2C `id_token_hint` trick doesn't exist, and the "admin account"
+// concept in External ID is for directory administration, not customer
+// impersonation — confirmed against Microsoft Learn, plan B4.3). So impersonation
+// is modelled where the plan says it must live (B4.1): at the APPLICATION /
+// SESSION layer, not the IdP. An RBAC-gated admin action mints an *app* session
+// that is explicitly marked as impersonation and carries BOTH identities — the
+// acting admin (`act`) and the impersonated subject (`sub`) — mirroring RFC 8693
+// token-exchange "actor" semantics so every downstream action is attributable.
+//
+// The security controls the plan's B4.2 review calls for are baked in here:
+//   • RBAC gate            — only an allow-listed admin can start (403 otherwise).
+//   • Separation of duties — an admin can't impersonate themselves; the session is
+//                            NOT an Entra token and never elevates the admin's own
+//                            rights; actor + subject are both recorded, always.
+//   • Least privilege      — scope is "read-only" for the POC; downstream
+//                            resources gate writes on the absence of `act`.
+//   • Bounded duration     — short TTL (15 min); the cookie self-expires.
+//   • Revocation           — a server-side active-session registry keyed by a
+//                            session id; revoke (or a process restart) kills a live
+//                            session immediately, independent of the cookie's exp.
+//   • Audit logging        — every start / stop / revoke is appended to an
+//                            append-only log with actor, subject, reason and time,
+//                            readable by admins.
+//
+// This is a POC stand-in for a real portal backend (which would persist the
+// audit log + active sessions in a store, source admin rights from an app role or
+// PIM-eligible group, and require a justification ticket). It deliberately does
+// NOT call Graph to act as the subject — impersonation here is an app session, by
+// design. See impersonation-portal-design.md for the full design + review.
+
+const IMPERSONATION_COOKIE_NAME = "st_impersonation_session";
+const IMPERSONATION_TTL_SECONDS = 15 * 60; // bounded duration (B4.2)
+// Per-process signing key: a proxy restart invalidates every live impersonation
+// session (fail-closed), exactly like the webview/OTP stores.
+const impersonationSessionKey = crypto.randomBytes(32);
+
+// Active-session registry: sessionId -> session. Presence here == the session is
+// live; revoke/stop deletes it so the cookie alone can't resurrect it (true
+// revocation, B4.2). The audit log is append-only and retains ended sessions.
+const activeImpersonations = new Map();
+const impersonationAudit = []; // { action, sessionId, actor, subject, reason, scope, at }
+
+// Admin allow-list (RBAC, B4.2). Source admin rights from config here; a real
+// portal would use an app role / PIM-eligible group. For a quick local demo set
+// IMPERSONATION_ALLOW_ANY_ADMIN=true (every signed-in user is treated as an admin
+// — DEV ONLY; the portal surfaces this loudly).
+const IMPERSONATION_ADMIN_EMAILS = new Set(
+    (process.env.IMPERSONATION_ADMIN_EMAILS ?? "")
+        .split(",")
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean)
+);
+const IMPERSONATION_ADMIN_OIDS = new Set(
+    (process.env.IMPERSONATION_ADMIN_OIDS ?? "")
+        .split(",")
+        .map((o) => o.trim().toLowerCase())
+        .filter(Boolean)
+);
+const IMPERSONATION_ALLOW_ANY_ADMIN = process.env.IMPERSONATION_ALLOW_ANY_ADMIN === "true";
+
+/** The acting admin's identity, taken from their verified token. */
+function actorIdentity(payload) {
+    const email = [payload.signin_email, payload.email, payload.preferred_username].find(
+        (e) => typeof e === "string" && e.includes("@")
+    );
+    return { oid: payload.oid, email: email ?? null };
+}
+
+/** RBAC gate: is the verified caller authorised to impersonate? (B4.2) */
+function isImpersonationAdmin(payload) {
+    if (IMPERSONATION_ALLOW_ANY_ADMIN) return true;
+    const { oid, email } = actorIdentity(payload);
+    if (oid && IMPERSONATION_ADMIN_OIDS.has(String(oid).toLowerCase())) return true;
+    if (email && IMPERSONATION_ADMIN_EMAILS.has(email.toLowerCase())) return true;
+    return false;
+}
+
+function recordImpersonationAudit(action, session) {
+    const entry = {
+        action, // "start" | "stop" | "revoke"
+        sessionId: session.sessionId,
+        actor: session.actor,
+        subject: session.subject,
+        reason: session.reason ?? null,
+        scope: session.scope ?? null,
+        at: new Date().toISOString(),
+    };
+    impersonationAudit.push(entry);
+    // Operationally this would go to Azure Monitor / a SIEM, not just stdout.
+    console.log(
+        `[IMPERSONATION] ${action} session=${entry.sessionId} ` +
+            `actor=${entry.actor?.email ?? entry.actor?.oid} subject=${entry.subject?.email ?? entry.subject?.oid} ` +
+            `reason=${JSON.stringify(entry.reason)}`
+    );
+    return entry;
+}
+
+function makeImpersonationCookie(session) {
+    const payload = Buffer.from(
+        JSON.stringify({
+            sessionId: session.sessionId,
+            act: session.actor, // RFC 8693 "actor" — who is really driving
+            sub: session.subject, // who is being impersonated
+            reason: session.reason,
+            scope: session.scope,
+            iat: session.startedAt,
+            exp: session.expiresAt,
+            impersonated: true,
+        })
+    ).toString("base64url");
+    const sig = crypto
+        .createHmac("sha256", impersonationSessionKey)
+        .update(payload)
+        .digest("base64url");
+    return (
+        `${IMPERSONATION_COOKIE_NAME}=${payload}.${sig}; HttpOnly; SameSite=Lax; Path=/; ` +
+        `Max-Age=${IMPERSONATION_TTL_SECONDS}`
+    );
+}
+
+function clearImpersonationCookie() {
+    return `${IMPERSONATION_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
+}
+
+/**
+ * Validate the signed impersonation cookie AND confirm the session is still in the
+ * active registry (so a revoked/stopped/restart-cleared session is rejected even
+ * though its cookie is otherwise valid and unexpired). Returns the live session or
+ * null.
+ */
+function readImpersonationSession(req) {
+    const header = req.headers.cookie ?? "";
+    const cookie = header
+        .split(/;\s*/)
+        .find((c) => c.startsWith(`${IMPERSONATION_COOKIE_NAME}=`));
+    if (!cookie) return null;
+    const value = cookie.slice(IMPERSONATION_COOKIE_NAME.length + 1);
+    const dot = value.lastIndexOf(".");
+    if (dot <= 0) return null;
+    const payload = value.slice(0, dot);
+    const sig = value.slice(dot + 1);
+    const expected = crypto
+        .createHmac("sha256", impersonationSessionKey)
+        .update(payload)
+        .digest("base64url");
+    const sigBuf = Buffer.from(sig);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+    let claims;
+    try {
+        claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    } catch {
+        return null;
+    }
+    if ((claims.exp ?? 0) < Math.floor(Date.now() / 1000)) return null;
+    // Revocation check: the cookie is only honoured while its session is live.
+    const live = activeImpersonations.get(claims.sessionId);
+    if (!live) return null;
+    return live;
+}
+
+/**
+ * Resolve the customer to be impersonated by email. We never mint a token as them
+ * — this only confirms the subject is a real account and captures their oid/name
+ * for the audit trail and the impersonated view. Tries the sign-in identity (beta,
+ * unmasked via $filter) first, then the profile `mail`.
+ */
+async function findImpersonationSubject(email) {
+    const escaped = String(email).replace(/'/g, "''");
+    const probes = [
+        {
+            base: GRAPH_BETA,
+            filter: `identities/any(c:c/issuerAssignedId eq '${escaped}')`,
+        },
+        { base: GRAPH_BASE, filter: `mail eq '${escaped}'` },
+    ];
+    for (const probe of probes) {
+        const res = await callGraph(
+            "GET",
+            `/users?$select=id,displayName,mail,userPrincipalName&$filter=${encodeURIComponent(
+                probe.filter
+            )}&$top=2`,
+            undefined,
+            probe.base
+        );
+        if (res.ok) {
+            const users = res.json?.value ?? [];
+            if (users.length > 1) {
+                throw new HttpError(409, `More than one account matches ${email}; cannot impersonate ambiguously.`);
+            }
+            if (users.length === 1) {
+                const u = users[0];
+                return { oid: u.id, email: u.mail ?? email.toLowerCase(), name: u.displayName ?? null };
+            }
+        }
+    }
+    throw new HttpError(404, `No customer account found for ${email}.`);
+}
+
+/** Red impersonation banner injected into the impersonated view (B4.2 visibility). */
+function impersonationBannerHtml(session) {
+    const subject = escapeHtml(session.subject?.email ?? session.subject?.oid ?? "unknown");
+    const actor = escapeHtml(session.actor?.email ?? session.actor?.oid ?? "an administrator");
+    const ends = new Date(session.expiresAt * 1000).toLocaleTimeString();
+    return `<div style="background:#b3261e;color:#fff;padding:0.6rem 1rem;font-weight:700;line-height:1.4;">
+        ⚠ Impersonating <strong>${subject}</strong> — acting as admin <strong>${actor}</strong>.
+        <span style="font-weight:400;">Read-only · session ends ${escapeHtml(ends)} · use the portal to stop.</span>
+      </div>`;
+}
+
+/** Cookie-gated HTML shown "as the impersonated customer would see the portal". */
+function impersonationViewHtml(session, { profile = false } = {}) {
+    const subject = escapeHtml(session.subject?.email ?? session.subject?.oid ?? "unknown");
+    const reason = escapeHtml(session.reason ?? "—");
+    const body = profile
+        ? `<p>This is a <strong>second page</strong> of the impersonated customer's portal. You
+             navigated here carrying only the <code>HttpOnly</code> impersonation cookie — no token
+             was minted as the customer, and the session stayed attributed to the acting admin the
+             whole time.</p>
+           <p><a href="/impersonate-view">&larr; Back</a></p>`
+        : `<p>You are viewing the portal <strong>as ${subject}</strong>. In a real RWVP portal this
+             is where the support agent would see the customer's account exactly as the customer
+             does — to diagnose an issue — under the read-only impersonation session.</p>
+           <p><strong>Justification on record:</strong> ${reason}</p>
+           <p>This is an <strong>application session</strong>, not an Entra token: External ID has no
+             supported way to issue a token as another customer, so impersonation lives at the app
+             layer with the audit + revocation controls the portal enforces (plan B4.1/B4.2).</p>
+           <p><a href="/impersonate-view/profile">Go to a second page &rarr;</a> (proves the session
+             persists across navigation on the cookie alone).</p>`;
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Impersonated view</title>
+  <style>
+    body { margin:0; font-family:'Nunito',-apple-system,'Segoe UI',Roboto,sans-serif; color:#292929; background:#fff; }
+    header { background:#098851; color:#fff; padding:1rem 1.5rem; font-size:1.125rem; font-weight:700; }
+    main { padding:1.5rem; line-height:1.6; }
+    code { background:#f0f0f0; padding:0.1rem 0.3rem; border-radius:0.2rem; }
+    a { color:#267151; font-weight:700; }
+  </style>
+</head>
+<body>
+  ${impersonationBannerHtml(session)}
+  <header>Service Tasmania — customer portal</header>
+  <main>${body}</main>
+</body>
+</html>`;
+}
+
+function impersonationUnauthedHtml() {
+    return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<style>body{margin:0;font-family:'Nunito',-apple-system,'Segoe UI',sans-serif;color:#292929;padding:1.5rem;line-height:1.6;}</style>
+</head><body>
+  <p>No active impersonation session. An administrator must start one from the
+     RWVP portal first (and it may have expired or been revoked).</p>
+</body></html>`;
+}
+
+/**
+ * Handle the impersonation portal routes (Feature B / B4). Dispatched BEFORE the
+ * global Bearer-token gate: the view pages are an iframe navigation carrying only
+ * the impersonation cookie, and whoami/stop operate on that cookie. The mutating
+ * admin routes (start/revoke/audit) verify the admin's Bearer token themselves.
+ */
+async function handleImpersonation(req, res, route, url, corsHeaders) {
+    try {
+        // Cookie-gated view pages, loaded inside the portal's iframe.
+        if (
+            req.method === "GET" &&
+            (url.pathname === "/impersonate-view" || url.pathname === "/impersonate-view/profile")
+        ) {
+            const session = readImpersonationSession(req);
+            if (!session) {
+                res.writeHead(401, { "Content-Type": "text/html; charset=utf-8" });
+                res.end(impersonationUnauthedHtml());
+                return;
+            }
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(impersonationViewHtml(session, { profile: url.pathname.endsWith("/profile") }));
+            return;
+        }
+
+        // Who is currently being impersonated (cookie-based; no admin token needed
+        // — the portal reads this to render its banner + the embedded view).
+        if (route === "GET /api/impersonation/whoami") {
+            const session = readImpersonationSession(req);
+            if (!session) {
+                sendJson(res, 401, { error: { message: "No active impersonation session.", code: "no_session" } }, corsHeaders);
+                return;
+            }
+            sendJson(res, 200, { session: publicImpersonationSession(session) }, corsHeaders);
+            return;
+        }
+
+        // Stop impersonating. Always allowed (ending elevated access must never be
+        // blocked) and idempotent. Clears the cookie + removes from the registry.
+        if (route === "POST /api/impersonation/stop") {
+            const session = readImpersonationSession(req);
+            if (session) {
+                activeImpersonations.delete(session.sessionId);
+                recordImpersonationAudit("stop", session);
+            }
+            res.writeHead(200, {
+                "Content-Type": "application/json",
+                "Set-Cookie": clearImpersonationCookie(),
+                ...corsHeaders,
+            });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+        }
+
+        // Start an impersonation session — RBAC-gated.
+        if (route === "POST /api/impersonation/start") {
+            const admin = await verifyUserToken(req);
+            if (!isImpersonationAdmin(admin)) {
+                throw new HttpError(403, "You are not authorised to impersonate customers.", "not_admin");
+            }
+            const body = await parseJsonBody(req);
+            const subjectEmail = String(body.subjectEmail ?? "").trim();
+            const reason = String(body.reason ?? "").trim();
+            if (!EMAIL_RE.test(subjectEmail)) {
+                throw new HttpError(400, "Enter the customer's email address.");
+            }
+            if (reason.length < 5) {
+                throw new HttpError(400, "A justification (reason) is required and is recorded in the audit log.", "reason_required");
+            }
+            if (reason.length > 500) {
+                throw new HttpError(400, "Justification is too long (max 500 characters).");
+            }
+
+            const actor = actorIdentity(admin);
+            // Separation of duties: an admin can't impersonate their own account.
+            const actorEmail = actor.email?.toLowerCase();
+            if (actorEmail && actorEmail === subjectEmail.toLowerCase()) {
+                throw new HttpError(400, "You can't impersonate your own account.", "self_impersonation");
+            }
+
+            const subject = await findImpersonationSubject(subjectEmail);
+            if (subject.oid && subject.oid === actor.oid) {
+                throw new HttpError(400, "You can't impersonate your own account.", "self_impersonation");
+            }
+
+            const now = Math.floor(Date.now() / 1000);
+            const session = {
+                sessionId: crypto.randomUUID(),
+                actor,
+                subject,
+                reason,
+                scope: "read-only",
+                startedAt: now,
+                expiresAt: now + IMPERSONATION_TTL_SECONDS,
+            };
+            activeImpersonations.set(session.sessionId, session);
+            recordImpersonationAudit("start", session);
+
+            res.writeHead(200, {
+                "Content-Type": "application/json",
+                "Set-Cookie": makeImpersonationCookie(session),
+                ...corsHeaders,
+            });
+            res.end(JSON.stringify({ ok: true, session: publicImpersonationSession(session) }));
+            return;
+        }
+
+        // Revoke a live session by id — RBAC-gated (any admin can cut off another's
+        // session; that, plus the registry, is what makes revocation real).
+        if (route === "POST /api/impersonation/revoke") {
+            const admin = await verifyUserToken(req);
+            if (!isImpersonationAdmin(admin)) {
+                throw new HttpError(403, "You are not authorised to manage impersonation sessions.", "not_admin");
+            }
+            const body = await parseJsonBody(req);
+            const sessionId = String(body.sessionId ?? "").trim();
+            const live = activeImpersonations.get(sessionId);
+            if (!live) {
+                throw new HttpError(404, "No live session with that id (already ended or expired).");
+            }
+            activeImpersonations.delete(sessionId);
+            recordImpersonationAudit("revoke", { ...live, actor: actorIdentity(admin), subject: live.subject });
+            sendJson(res, 200, { ok: true }, corsHeaders);
+            return;
+        }
+
+        // Read the audit trail + currently-live sessions — RBAC-gated.
+        if (route === "GET /api/impersonation/audit") {
+            const admin = await verifyUserToken(req);
+            if (!isImpersonationAdmin(admin)) {
+                throw new HttpError(403, "You are not authorised to view the impersonation audit log.", "not_admin");
+            }
+            sendJson(
+                res,
+                200,
+                {
+                    active: [...activeImpersonations.values()].map(publicImpersonationSession),
+                    log: impersonationAudit,
+                },
+                corsHeaders
+            );
+            return;
+        }
+
+        throw new HttpError(404, "Not found.");
+    } catch (error) {
+        const status = error instanceof HttpError ? error.status : 500;
+        if (status === 500) console.error(error);
+        sendJson(res, status, { error: { message: error.message, code: error.code } }, corsHeaders);
+    }
+}
+
+/** Shape an internal session for the client (no signing material; same fields). */
+function publicImpersonationSession(session) {
+    return {
+        sessionId: session.sessionId,
+        actor: session.actor,
+        subject: session.subject,
+        reason: session.reason ?? null,
+        scope: session.scope ?? null,
+        startedAt: session.startedAt,
+        expiresAt: session.expiresAt,
+    };
+}
+
 /* ------------------------------ validation -------------------------------- */
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -996,6 +1426,14 @@ http.createServer(async (req, res) => {
         url.pathname === "/webview/profile"
     ) {
         await handleWebview(req, res, route, url, corsHeaders);
+        return;
+    }
+
+    // Impersonation portal — RWVP (Feature B / B4). Handled before the Bearer-token
+    // gate too: the view pages ride only the impersonation cookie, whoami/stop
+    // operate on that cookie, and the admin routes verify their own Bearer token.
+    if (url.pathname.startsWith("/api/impersonation/") || url.pathname.startsWith("/impersonate-view")) {
+        await handleImpersonation(req, res, route, url, corsHeaders);
         return;
     }
 
@@ -1112,7 +1550,14 @@ http.createServer(async (req, res) => {
     // Loopback only — never expose an app-only Graph credential to the LAN.
 }).listen(PORT, "127.0.0.1", () => {
     console.log(`Local Graph proxy listening on http://localhost:${PORT}`);
-    console.log(`  passkeys: /api/passkeys   account: /api/account   webview: /webview`);
+    console.log(`  passkeys: /api/passkeys   account: /api/account   webview: /webview   impersonation: /api/impersonation`);
+    console.log(
+        `  impersonation admins: ${
+            IMPERSONATION_ALLOW_ANY_ADMIN
+                ? "ANY signed-in user (IMPERSONATION_ALLOW_ANY_ADMIN=true — DEV ONLY)"
+                : [...IMPERSONATION_ADMIN_EMAILS, ...IMPERSONATION_ADMIN_OIDS].join(", ") || "none configured (set IMPERSONATION_ADMIN_EMAILS)"
+        }`
+    );
     console.log(`  CORS origins: ${[...ALLOWED_ORIGINS].join(", ")}`);
     console.log(`Graph user scope: tenant ${TENANT_SUBDOMAIN} (${TENANT_ID})`);
 });

@@ -8,6 +8,7 @@ import { InteractionStatus } from "@azure/msal-browser";
 import {
     accountFeatureAvailable,
     webviewFeatureAvailable,
+    impersonationFeatureAvailable,
     loginRequest,
     signUpRequest,
     logoutRequest,
@@ -24,9 +25,11 @@ export default function Navbar() {
     // account API base is configured.
     const [accountAvailable, setAccountAvailable] = useState(false);
     const [webviewAvailable, setWebviewAvailable] = useState(false);
+    const [impersonationAvailable, setImpersonationAvailable] = useState(false);
     useEffect(() => {
         setAccountAvailable(accountFeatureAvailable());
         setWebviewAvailable(webviewFeatureAvailable());
+        setImpersonationAvailable(impersonationFeatureAvailable());
     }, []);
 
     const handleSignIn = () => instance.loginRedirect(loginRequest);
@@ -86,6 +89,11 @@ export default function Navbar() {
                         <Link href="/handoff" className={styles.link}>
                             System-browser SSO
                         </Link>
+                        {impersonationAvailable && (
+                            <Link href="/impersonate" className={styles.link}>
+                                Impersonation
+                            </Link>
+                        )}
                         <button className={styles.link} onClick={handleSignOut} disabled={busy}>
                             Sign Out
                         </button>
