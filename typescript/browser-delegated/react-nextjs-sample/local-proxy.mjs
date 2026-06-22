@@ -1111,54 +1111,107 @@ async function findImpersonationSubject(email) {
     throw new HttpError(404, `No customer account found for ${email}.`);
 }
 
-/** Red impersonation banner injected into the impersonated view (B4.2 visibility). */
+/** Sticky red impersonation bar — always visible, names both parties (B4.2). */
 function impersonationBannerHtml(session) {
     const subject = escapeHtml(session.subject?.email ?? session.subject?.oid ?? "unknown");
     const actor = escapeHtml(session.actor?.email ?? session.actor?.oid ?? "an administrator");
     const ends = new Date(session.expiresAt * 1000).toLocaleTimeString();
-    return `<div style="background:#b3261e;color:#fff;padding:0.6rem 1rem;font-weight:700;line-height:1.4;">
-        ⚠ Impersonating <strong>${subject}</strong> — acting as admin <strong>${actor}</strong>.
-        <span style="font-weight:400;">Read-only · session ends ${escapeHtml(ends)} · use the portal to stop.</span>
+    return `<div class="imp-bar">
+        <span class="imp-pill">IMPERSONATION</span>
+        <span>You (<strong>${actor}</strong>) are viewing <strong>${subject}</strong>&rsquo;s account</span>
+        <span class="imp-bar-meta">read-only · ends ${escapeHtml(ends)}</span>
       </div>`;
+}
+
+/**
+ * Admin-only context box. This is the "things I can see *because* I'm an admin"
+ * the customer themselves would never see — it makes the impersonation explicit
+ * rather than just swapping in the customer's email.
+ */
+function impersonationAdminContextHtml(session) {
+    const row = (label, value) =>
+        `<tr><th>${escapeHtml(label)}</th><td>${value ? escapeHtml(String(value)) : "&mdash;"}</td></tr>`;
+    const subjectName = session.subject?.name ? ` (${session.subject.name})` : "";
+    return `<section class="imp-admin">
+        <p class="imp-admin-title">🛡 Administrator view — not visible to the customer</p>
+        <table class="imp-admin-table">
+          ${row("Signed in as (you)", session.actor?.email ?? session.actor?.oid)}
+          ${row("Impersonating", `${session.subject?.email ?? session.subject?.oid ?? "unknown"}${subjectName}`)}
+          ${row("Customer object id", session.subject?.oid)}
+          ${row("Access scope", session.scope)}
+          ${row("Justification on record", session.reason)}
+          ${row("Session id", session.sessionId)}
+          ${row("Started", new Date(session.startedAt * 1000).toLocaleString())}
+          ${row("Expires", new Date(session.expiresAt * 1000).toLocaleString())}
+        </table>
+      </section>`;
 }
 
 /** Cookie-gated HTML shown "as the impersonated customer would see the portal". */
 function impersonationViewHtml(session, { profile = false } = {}) {
-    const subject = escapeHtml(session.subject?.email ?? session.subject?.oid ?? "unknown");
-    const reason = escapeHtml(session.reason ?? "—");
+    const subjectEmail = escapeHtml(session.subject?.email ?? session.subject?.oid ?? "unknown");
+    const subjectName = escapeHtml(session.subject?.name ?? "—");
     const body = profile
-        ? `<p>This is a <strong>second page</strong> of the impersonated customer's portal. You
-             navigated here carrying only the <code>HttpOnly</code> impersonation cookie — no token
-             was minted as the customer, and the session stayed attributed to the acting admin the
-             whole time.</p>
-           <p><a href="/impersonate-view">&larr; Back</a></p>`
-        : `<p>You are viewing the portal <strong>as ${subject}</strong>. In a real RWVP portal this
-             is where the support agent would see the customer's account exactly as the customer
-             does — to diagnose an issue — under the read-only impersonation session.</p>
-           <p><strong>Justification on record:</strong> ${reason}</p>
-           <p>This is an <strong>application session</strong>, not an Entra token: External ID has no
-             supported way to issue a token as another customer, so impersonation lives at the app
-             layer with the audit + revocation controls the portal enforces (plan B4.1/B4.2).</p>
-           <p><a href="/impersonate-view/profile">Go to a second page &rarr;</a> (proves the session
-             persists across navigation on the cookie alone).</p>`;
+        ? `<p>This is a <strong>second page</strong> of the impersonated customer&rsquo;s portal. You
+             navigated here carrying only the <code>HttpOnly</code> impersonation cookie — no token was
+             minted as the customer, and the session stayed attributed to you the whole time.</p>
+           <p><a href="/impersonate-view">&larr; Back to the customer&rsquo;s home</a></p>`
+        : `<section class="imp-customer">
+             <p class="imp-customer-title">Customer account — as ${subjectEmail} sees it</p>
+             <table class="imp-customer-table">
+               <tr><th>Name</th><td>${subjectName}</td></tr>
+               <tr><th>Email</th><td>${subjectEmail}</td></tr>
+             </table>
+             <p class="imp-customer-note">This panel shows the <strong>customer&rsquo;s</strong> data — what they
+               would see signed in normally. You&rsquo;re seeing it through a read-only impersonation session, not
+               as yourself.</p>
+           </section>
+           <p>This is an <strong>application session</strong>, not an Entra token: External ID has no supported
+             way to issue a token as another customer, so impersonation lives at the app layer with the audit +
+             revocation controls the portal enforces (plan B4.1/B4.2).</p>
+           <p><a href="/impersonate-view/profile">Go to a second page &rarr;</a> (proves the session persists
+             across navigation on the cookie alone).</p>`;
     return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Impersonated view</title>
+  <title>Impersonated view — ${subjectEmail}</title>
   <style>
-    body { margin:0; font-family:'Nunito',-apple-system,'Segoe UI',Roboto,sans-serif; color:#292929; background:#fff; }
-    header { background:#098851; color:#fff; padding:1rem 1.5rem; font-size:1.125rem; font-weight:700; }
-    main { padding:1.5rem; line-height:1.6; }
+    html, body { margin:0; }
+    body {
+      font-family:'Nunito',-apple-system,'Segoe UI',Roboto,sans-serif; color:#292929; background:#fff;
+      /* Persistent red frame so it's unmistakable at every scroll position. */
+      border:0.375rem solid #b3261e; box-sizing:border-box; min-height:100vh;
+    }
+    .imp-bar {
+      position:sticky; top:0; z-index:10; background:#b3261e; color:#fff;
+      padding:0.6rem 1rem; font-weight:700; line-height:1.4;
+      display:flex; flex-wrap:wrap; gap:0.2rem 0.7rem; align-items:center;
+    }
+    .imp-pill { background:#fff; color:#b3261e; border-radius:1rem; padding:0.05rem 0.6rem; font-size:0.75rem; letter-spacing:0.04em; }
+    .imp-bar-meta { font-weight:400; opacity:0.95; }
+    header { background:#098851; color:#fff; padding:0.9rem 1.5rem; font-size:1.05rem; font-weight:700; }
+    main { padding:1.25rem 1.5rem; line-height:1.6; }
     code { background:#f0f0f0; padding:0.1rem 0.3rem; border-radius:0.2rem; }
     a { color:#267151; font-weight:700; }
+    .imp-admin { background:#fef6e7; border:0.0625rem solid #f0c674; border-left:0.25rem solid #b45309; padding:0.75rem 1rem; margin:0 0 1.25rem 0; }
+    .imp-admin-title { margin:0 0 0.5rem 0; font-weight:800; color:#92400e; }
+    .imp-admin-table, .imp-customer-table { border-collapse:collapse; width:100%; font-size:0.875rem; }
+    .imp-admin-table th, .imp-customer-table th { text-align:left; padding:0.2rem 0.75rem 0.2rem 0; color:#6b7280; font-weight:700; white-space:nowrap; vertical-align:top; }
+    .imp-admin-table td, .imp-customer-table td { padding:0.2rem 0; word-break:break-word; }
+    .imp-customer { border:0.0625rem solid #d1d5db; border-left:0.25rem solid #098851; padding:0.75rem 1rem; margin:0 0 1.25rem 0; background:#fafafa; }
+    .imp-customer-title { margin:0 0 0.5rem 0; font-weight:800; color:#098851; }
+    .imp-customer-note { margin:0.75rem 0 0 0; font-size:0.8125rem; color:#6b7280; }
   </style>
 </head>
 <body>
   ${impersonationBannerHtml(session)}
   <header>Service Tasmania — customer portal</header>
-  <main>${body}</main>
+  <main>
+    ${impersonationAdminContextHtml(session)}
+    ${body}
+  </main>
 </body>
 </html>`;
 }
