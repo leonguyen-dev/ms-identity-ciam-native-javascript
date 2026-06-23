@@ -81,15 +81,19 @@ export default function Navbar() {
                         </Link>
                     </>
                 )}
-                <Link href="/webview" className={styles.link}>
-                    Webview SSO
-                </Link>
-                <Link href="/account" className={styles.link}>
-                    My Account
-                </Link>
-                <button onClick={handleLogout} className={styles.link} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'inherit', textDecoration: 'underline' }}>
-                    Sign Out
-                </button>
+                {isSignedIn && (
+                    <>
+                        <Link href="/webview" className={styles.link}>
+                            Webview SSO
+                        </Link>
+                        <Link href="/account" className={styles.link}>
+                            My Account
+                        </Link>
+                        <button onClick={handleLogout} className={styles.link} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'inherit', textDecoration: 'underline' }}>
+                            Sign Out
+                        </button>
+                    </>
+                )}
             </div>
         </nav>
     );
