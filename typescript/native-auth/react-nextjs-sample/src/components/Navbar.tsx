@@ -2,13 +2,31 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useAuthClient } from "@/auth/AuthClientProvider";
 import styles from "./Navbar.module.css";
 
 export default function Navbar() {
     const router = useRouter();
+    const pathname = usePathname();
     const app = useAuthClient();
+    const [isSignedIn, setIsSignedIn] = useState(false);
+
+    useEffect(() => {
+        if (!app) return;
+        const checkAccount = () => setIsSignedIn(!!app.getCurrentAccount().data);
+
+        checkAccount();
+        // Sign-in completes on the home page without a navigation, so poll the
+        // MSAL cache to pick up the change promptly. Also re-check on focus.
+        const interval = setInterval(checkAccount, 800);
+        window.addEventListener("focus", checkAccount);
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener("focus", checkAccount);
+        };
+    }, [app, pathname]);
 
     const handleLogout = async () => {
         if (!app) return;
@@ -50,15 +68,19 @@ export default function Navbar() {
                 />
             </Link>
             <div className={styles.links}>
-                <Link href="/" className={styles.link}>
-                    Sign In
-                </Link>
-                <Link href="/sign-up" className={styles.link}>
-                    Sign Up
-                </Link>
-                <Link href="/reset-password" className={styles.link}>
-                    Reset Password
-                </Link>
+                {!isSignedIn && (
+                    <>
+                        <Link href="/" className={styles.link}>
+                            Sign In
+                        </Link>
+                        <Link href="/sign-up" className={styles.link}>
+                            Sign Up
+                        </Link>
+                        <Link href="/reset-password" className={styles.link}>
+                            Reset Password
+                        </Link>
+                    </>
+                )}
                 <Link href="/webview" className={styles.link}>
                     Webview SSO
                 </Link>
