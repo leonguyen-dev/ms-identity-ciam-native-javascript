@@ -35,6 +35,45 @@ This sample app leverages the `@azure/msal-browser/custom-auth` SDK to implement
 - Also, during the automatic sign-in after password reset, users may be requried to complete additional verification if MFA is enabled.
 - Handles errors such as invalid or expired reset codes.
 
+#### Native app → in-app web content (embedded webview SSO)
+Once a user has signed in with native authentication, the app can show web-based
+features (a profile page, a rewards dashboard, …) inside an embedded web view
+with **no second sign-in**. This implements Microsoft's supported pattern,
+[SSO from native apps to embedded web views](https://learn.microsoft.com/entra/identity-platform/how-to-native-authentication-webview-sso):
+
+1. The user signs in with native authentication (the rest of this sample).
+2. Before loading the web view, the app retrieves a valid token from the SDK and
+   injects `Authorization: Bearer <token>` onto the web view's first request.
+3. The web resource validates the token (signature, issuer, audience, tenant,
+   expiry) and issues a standard `HttpOnly` session cookie.
+4. The web view rides that cookie — signed in, with no prompt — and the session
+   persists across in-webview navigation.
+
+In this sample:
+
+- [`src/app/webview/page.tsx`](src/app/webview/page.tsx) is the **native app
+  shell**. A WebView/WKWebView can set a header on the web view's request
+  directly; a browser `<iframe>` can't, so the shell does the bearer injection
+  with a credentialed `fetch` to `POST /api/webview/session`, then loads the
+  content in the iframe. The backend logic (validate bearer → set `HttpOnly`
+  cookie → serve from the cookie) is identical to the real native case.
+- The **web resource** is served by the CORS proxy ([`cors.js`](cors.js)):
+  `POST /api/webview/session` validates the token and sets the cookie;
+  `GET /webview` and `GET /webview/profile` are cookie-gated content pages.
+- `SameSite=Lax` is sufficient because the app (`:3000`) and the web resource
+  (`:3001`) are the **same site** (both `localhost`). In production the app and
+  the web resource live under one registrable domain (a single custom URL
+  domain), which keeps the cookie first-party.
+- The sample injects the **ID token** (its `aud` is this client id, so it runs
+  with no extra Entra setup). For production, expose an **API scope** on the
+  shared app registration, acquire it with the SDK's
+  `accountData.getAccessToken({ scopes })`, and validate that access token's
+  `aud` — the validation logic is otherwise identical. The mobile app and the web
+  resource must **share the same client id** (application id).
+
+Open **Webview SSO** in the nav after signing in. The proxy (`npm run cors`) must
+be running and the app reachable on `localhost`.
+
 For more details on the SDK, see the official Microsoft documentation.
 
 ## Getting Started

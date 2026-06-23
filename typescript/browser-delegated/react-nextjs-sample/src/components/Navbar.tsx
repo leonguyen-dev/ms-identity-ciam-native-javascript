@@ -7,6 +7,8 @@ import { useMsal, useIsAuthenticated } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
 import {
     accountFeatureAvailable,
+    webviewFeatureAvailable,
+    impersonationFeatureAvailable,
     loginRequest,
     signUpRequest,
     logoutRequest,
@@ -22,7 +24,13 @@ export default function Navbar() {
     // and the first client render agree; flips to true on localhost or when an
     // account API base is configured.
     const [accountAvailable, setAccountAvailable] = useState(false);
-    useEffect(() => setAccountAvailable(accountFeatureAvailable()), []);
+    const [webviewAvailable, setWebviewAvailable] = useState(false);
+    const [impersonationAvailable, setImpersonationAvailable] = useState(false);
+    useEffect(() => {
+        setAccountAvailable(accountFeatureAvailable());
+        setWebviewAvailable(webviewFeatureAvailable());
+        setImpersonationAvailable(impersonationFeatureAvailable());
+    }, []);
 
     const handleSignIn = () => instance.loginRedirect(loginRequest);
     const handleSignUp = () => instance.loginRedirect(signUpRequest);
@@ -71,6 +79,19 @@ export default function Navbar() {
                         {accountAvailable && (
                             <Link href="/account" className={styles.link}>
                                 My Account
+                            </Link>
+                        )}
+                        {webviewAvailable && (
+                            <Link href="/webview" className={styles.link}>
+                                Webview SSO
+                            </Link>
+                        )}
+                        <Link href="/handoff" className={styles.link}>
+                            System-browser SSO
+                        </Link>
+                        {impersonationAvailable && (
+                            <Link href="/impersonate" className={styles.link}>
+                                Impersonation
                             </Link>
                         )}
                         <button className={styles.link} onClick={handleSignOut} disabled={busy}>

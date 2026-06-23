@@ -93,7 +93,7 @@ async function callPasskeyApi(
 ): Promise<Response> {
     let response: Response;
     try {
-        response = await fetch(`${passkeyApiBase}${path}`, {
+        response = await fetch(`${passkeyApiBase()}${path}`, {
             ...init,
             headers: {
                 "Content-Type": "application/json",

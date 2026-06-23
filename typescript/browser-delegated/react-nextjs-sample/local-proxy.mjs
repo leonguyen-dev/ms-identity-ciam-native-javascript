@@ -21,6 +21,12 @@
  *     POST /api/account/signin-name           change sign-in email (fresh MFA + OTP)
  *     POST /api/account/phone                 change mobile number (fresh MFA)
  *
+ *   Webview SSO (Feature B / B2 — native app → in-app web content):
+ *     POST /api/webview/session               validate the injected Bearer token →
+ *                                             set an HttpOnly session cookie
+ *     GET  /webview                           cookie-gated in-app web content
+ *     GET  /webview/profile                   second page (proves session persists)
+ *
  * (Previously two separate servers — passkey-proxy.mjs and account-proxy.mjs —
  * that both bound port 3001, so only one could run at a time. They share the same
  * token-verification + app-only-Graph machinery and their routes never overlap,
@@ -67,6 +73,7 @@
 
 import fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 import crypto from "node:crypto";
 import { EmailClient } from "@azure/communication-email";
@@ -733,6 +740,657 @@ async function changePhone(oid, phoneNumber) {
     assertGraphOk(result, "Could not change your phone number.");
 }
 
+/* --------------------- webview SSO (Feature B / B2) ----------------------- */
+
+// Native app → in-app web content (embedded webview) SSO. Models the supported
+// pattern from
+// https://learn.microsoft.com/entra/identity-platform/how-to-native-authentication-webview-sso:
+//
+//   1. The native app acquires a token (here: the SPA's verified ID token).
+//   2. It injects `Authorization: Bearer <token>` into the webview's request
+//      (B2.2). A browser can't set headers on an <iframe> navigation, so the
+//      "native app shell" (src/app/webview/page.tsx) does the injection with a
+//      credentialed fetch to POST /api/webview/session — the one place the bearer
+//      is presented.
+//   3. This backend validates aud/iss/tid/sig/exp (B2.3 — the SAME verifyUserToken
+//      machinery every other route uses) and sets an HttpOnly session cookie.
+//   4. The webview then loads GET /webview, which is gated on that cookie alone —
+//      no token re-injection — so the session persists across navigation
+//      (GET /webview → GET /webview/profile) with no second prompt (B2.4).
+//
+// SameSite=Lax is sufficient here: the app (:3000) and this web resource (:3001)
+// are the SAME SITE (both `localhost`), so the cookie is first-party on the
+// iframe's requests and isn't affected by third-party-cookie blocking. In
+// production the app and the web resource live under one registrable domain
+// (the single custom URL domain, P0.1), which keeps that property; a genuinely
+// cross-site embed would need CHIPS/partitioned cookies instead.
+
+const WEBVIEW_COOKIE_NAME = "st_webview_session";
+const WEBVIEW_SESSION_TTL_SECONDS = 60 * 60;
+// Per-process signing key: a proxy restart invalidates live webview sessions
+// (the user simply reopens the demo), exactly like the in-memory OTP store.
+const webviewSessionKey = crypto.randomBytes(32);
+
+function makeWebviewCookie(claims) {
+    const exp = Math.floor(Date.now() / 1000) + WEBVIEW_SESSION_TTL_SECONDS;
+    const payload = Buffer.from(JSON.stringify({ ...claims, exp })).toString("base64url");
+    const sig = crypto.createHmac("sha256", webviewSessionKey).update(payload).digest("base64url");
+    return (
+        `${WEBVIEW_COOKIE_NAME}=${payload}.${sig}; HttpOnly; SameSite=Lax; Path=/; ` +
+        `Max-Age=${WEBVIEW_SESSION_TTL_SECONDS}`
+    );
+}
+
+/** Validate the signed session cookie; returns the claims or null. */
+function readWebviewCookie(req) {
+    const header = req.headers.cookie ?? "";
+    const cookie = header.split(/;\s*/).find((c) => c.startsWith(`${WEBVIEW_COOKIE_NAME}=`));
+    if (!cookie) return null;
+    const value = cookie.slice(WEBVIEW_COOKIE_NAME.length + 1);
+    const dot = value.lastIndexOf(".");
+    if (dot <= 0) return null;
+    const payload = value.slice(0, dot);
+    const sig = value.slice(dot + 1);
+    const expected = crypto.createHmac("sha256", webviewSessionKey).update(payload).digest("base64url");
+    const sigBuf = Buffer.from(sig);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+    let claims;
+    try {
+        claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    } catch {
+        return null;
+    }
+    if ((claims.exp ?? 0) < Math.floor(Date.now() / 1000)) return null;
+    return claims;
+}
+
+const escapeHtml = (s) =>
+    String(s).replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+    );
+
+/** Branded HTML shown inside the webview once the cookie is established. */
+function webviewContentHtml(session, { profile = false } = {}) {
+    const email = escapeHtml(session.email ?? session.oid ?? "unknown");
+    const heading = profile ? "Webview · Profile" : "Webview · Home";
+    const body = profile
+        ? `<p>This is a <strong>second page</strong> inside the webview. You navigated here
+             from the home page with <strong>no token re-injection</strong> — the request
+             carried only the <code>HttpOnly</code> session cookie set on the first load.
+             That is the "persist the session across navigation" guarantee (B2.3).</p>
+           <p><a href="/webview">&larr; Back to webview home</a></p>`
+        : `<p>You are signed in <strong>inside the embedded web content</strong> as
+             <strong>${email}</strong> — with <strong>no second prompt</strong>.</p>
+           <p>The native app shell acquired a token, injected it as a Bearer header on the
+             first request, and this backend exchanged it for an <code>HttpOnly</code>
+             session cookie (B2.2 / B2.3). Follow the link below to prove the session
+             persists across navigation without re-injecting the token:</p>
+           <p><a href="/webview/profile">Go to the profile page &rarr;</a></p>`;
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${heading}</title>
+  <style>
+    body { margin:0; font-family:'Nunito',-apple-system,'Segoe UI',Roboto,sans-serif; color:#292929; background:#ffffff; }
+    header { background:#098851; color:#fff; padding:1rem 1.5rem; font-size:1.125rem; font-weight:700; }
+    main { padding:1.5rem; line-height:1.6; }
+    code { background:#f0f0f0; padding:0.1rem 0.3rem; border-radius:0.2rem; }
+    a { color:#267151; font-weight:700; }
+    .badge { display:inline-block; background:#e6f4ec; color:#098851; font-weight:700; padding:0.25rem 0.6rem; border-radius:1rem; font-size:0.8125rem; }
+  </style>
+</head>
+<body>
+  <header>Service Tasmania — in-app web content</header>
+  <main>
+    <p><span class="badge">webview session active</span></p>
+    ${body}
+  </main>
+</body>
+</html>`;
+}
+
+/** Shown in the iframe when no valid session cookie is present. */
+function webviewUnauthedHtml() {
+    return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<style>body{margin:0;font-family:'Nunito',-apple-system,'Segoe UI',sans-serif;color:#292929;padding:1.5rem;line-height:1.6;}</style>
+</head><body>
+  <p>No webview session. The native app shell must establish one first
+     (POST <code>/api/webview/session</code> with a Bearer token).</p>
+</body></html>`;
+}
+
+/**
+ * Handle the webview SSO routes (Feature B / B2). Dispatched BEFORE the global
+ * Bearer-token gate because the content pages are loaded by an iframe navigation
+ * that carries only the session cookie, no Authorization header.
+ */
+async function handleWebview(req, res, route, url, corsHeaders) {
+    // B2.2 / B2.3: the native app shell presents its Bearer token here; we
+    // validate it and hand back an HttpOnly session cookie.
+    if (route === "POST /api/webview/session") {
+        try {
+            const user = await verifyUserToken(req);
+            const email = [user.signin_email, user.email, user.preferred_username].find(
+                (e) => typeof e === "string" && e.includes("@")
+            );
+            res.writeHead(200, {
+                "Content-Type": "application/json",
+                "Set-Cookie": makeWebviewCookie({ oid: user.oid, email, name: user.name ?? null }),
+                ...corsHeaders,
+            });
+            res.end(JSON.stringify({ ok: true, user: { email: email ?? null, name: user.name ?? null } }));
+        } catch (error) {
+            const status = error instanceof HttpError ? error.status : 500;
+            if (status === 500) console.error(error);
+            sendJson(res, status, { error: { message: error.message, code: error.code } }, corsHeaders);
+        }
+        return;
+    }
+
+    // B2.4: cookie-gated HTML content, loaded inside the iframe.
+    if (req.method === "GET" && (url.pathname === "/webview" || url.pathname === "/webview/profile")) {
+        const session = readWebviewCookie(req);
+        if (!session) {
+            res.writeHead(401, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(webviewUnauthedHtml());
+            return;
+        }
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(webviewContentHtml(session, { profile: url.pathname === "/webview/profile" }));
+        return;
+    }
+
+    res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+    res.end("<!doctype html><p>Not found.</p>");
+}
+
+/* ----------------- impersonation portal — RWVP (Feature B / B4) ----------- */
+
+// Admin "sign in as a customer" support portal. This is the hardest, most
+// security-sensitive cross-app scenario and the one External ID has NO native
+// IdP pattern for: there is no supported way to mint an Entra token *as* another
+// customer (the B2C `id_token_hint` trick doesn't exist, and the "admin account"
+// concept in External ID is for directory administration, not customer
+// impersonation — confirmed against Microsoft Learn, plan B4.3). So impersonation
+// is modelled where the plan says it must live (B4.1): at the APPLICATION /
+// SESSION layer, not the IdP. An RBAC-gated admin action mints an *app* session
+// that is explicitly marked as impersonation and carries BOTH identities — the
+// acting admin (`act`) and the impersonated subject (`sub`) — mirroring RFC 8693
+// token-exchange "actor" semantics so every downstream action is attributable.
+//
+// The security controls the plan's B4.2 review calls for are baked in here:
+//   • RBAC gate            — only an allow-listed admin can start (403 otherwise).
+//   • Separation of duties — an admin can't impersonate themselves; the session is
+//                            NOT an Entra token and never elevates the admin's own
+//                            rights; actor + subject are both recorded, always.
+//   • Least privilege      — scope is "read-only" for the POC; downstream
+//                            resources gate writes on the absence of `act`.
+//   • Bounded duration     — short TTL (15 min); the cookie self-expires.
+//   • Revocation           — a server-side active-session registry keyed by a
+//                            session id; revoke (or a process restart) kills a live
+//                            session immediately, independent of the cookie's exp.
+//   • Audit logging        — every start / stop / revoke is appended to an
+//                            append-only log with actor, subject, reason and time,
+//                            readable by admins.
+//
+// This is a POC stand-in for a real portal backend (which would persist the
+// audit log + active sessions in a store, source admin rights from an app role or
+// PIM-eligible group, and require a justification ticket). It deliberately does
+// NOT call Graph to act as the subject — impersonation here is an app session, by
+// design. See impersonation-portal-design.md for the full design + review.
+
+const IMPERSONATION_COOKIE_NAME = "st_impersonation_session";
+const IMPERSONATION_TTL_SECONDS = 15 * 60; // bounded duration (B4.2)
+// Per-process signing key: a proxy restart invalidates every live impersonation
+// session (fail-closed), exactly like the webview/OTP stores.
+const impersonationSessionKey = crypto.randomBytes(32);
+
+// Active-session registry: sessionId -> session. Presence here == the session is
+// live; revoke/stop deletes it so the cookie alone can't resurrect it (true
+// revocation, B4.2). The audit log is append-only and retains ended sessions.
+const activeImpersonations = new Map();
+const impersonationAudit = []; // { action, sessionId, actor, subject, reason, scope, at }
+
+// Admin allow-list (RBAC, B4.2). Source admin rights from config here; a real
+// portal would use an app role / PIM-eligible group. For a quick local demo set
+// IMPERSONATION_ALLOW_ANY_ADMIN=true (every signed-in user is treated as an admin
+// — DEV ONLY; the portal surfaces this loudly).
+const IMPERSONATION_ADMIN_EMAILS = new Set(
+    (process.env.IMPERSONATION_ADMIN_EMAILS ?? "")
+        .split(",")
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean)
+);
+const IMPERSONATION_ADMIN_OIDS = new Set(
+    (process.env.IMPERSONATION_ADMIN_OIDS ?? "")
+        .split(",")
+        .map((o) => o.trim().toLowerCase())
+        .filter(Boolean)
+);
+const IMPERSONATION_ALLOW_ANY_ADMIN = process.env.IMPERSONATION_ALLOW_ANY_ADMIN === "true";
+
+/** The acting admin's identity, taken from their verified token. */
+function actorIdentity(payload) {
+    const email = [payload.signin_email, payload.email, payload.preferred_username].find(
+        (e) => typeof e === "string" && e.includes("@")
+    );
+    return { oid: payload.oid, email: email ?? null };
+}
+
+/** RBAC gate: is the verified caller authorised to impersonate? (B4.2) */
+function isImpersonationAdmin(payload) {
+    if (IMPERSONATION_ALLOW_ANY_ADMIN) return true;
+    const { oid, email } = actorIdentity(payload);
+    if (oid && IMPERSONATION_ADMIN_OIDS.has(String(oid).toLowerCase())) return true;
+    if (email && IMPERSONATION_ADMIN_EMAILS.has(email.toLowerCase())) return true;
+    return false;
+}
+
+function recordImpersonationAudit(action, session) {
+    const entry = {
+        action, // "start" | "stop" | "revoke"
+        sessionId: session.sessionId,
+        actor: session.actor,
+        subject: session.subject,
+        reason: session.reason ?? null,
+        scope: session.scope ?? null,
+        at: new Date().toISOString(),
+    };
+    impersonationAudit.push(entry);
+    // Operationally this would go to Azure Monitor / a SIEM, not just stdout.
+    console.log(
+        `[IMPERSONATION] ${action} session=${entry.sessionId} ` +
+            `actor=${entry.actor?.email ?? entry.actor?.oid} subject=${entry.subject?.email ?? entry.subject?.oid} ` +
+            `reason=${JSON.stringify(entry.reason)}`
+    );
+    return entry;
+}
+
+function makeImpersonationCookie(session) {
+    const payload = Buffer.from(
+        JSON.stringify({
+            sessionId: session.sessionId,
+            act: session.actor, // RFC 8693 "actor" — who is really driving
+            sub: session.subject, // who is being impersonated
+            reason: session.reason,
+            scope: session.scope,
+            iat: session.startedAt,
+            exp: session.expiresAt,
+            impersonated: true,
+        })
+    ).toString("base64url");
+    const sig = crypto
+        .createHmac("sha256", impersonationSessionKey)
+        .update(payload)
+        .digest("base64url");
+    return (
+        `${IMPERSONATION_COOKIE_NAME}=${payload}.${sig}; HttpOnly; SameSite=Lax; Path=/; ` +
+        `Max-Age=${IMPERSONATION_TTL_SECONDS}`
+    );
+}
+
+function clearImpersonationCookie() {
+    return `${IMPERSONATION_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
+}
+
+/**
+ * Validate the signed impersonation cookie AND confirm the session is still in the
+ * active registry (so a revoked/stopped/restart-cleared session is rejected even
+ * though its cookie is otherwise valid and unexpired). Returns the live session or
+ * null.
+ */
+function readImpersonationSession(req) {
+    const header = req.headers.cookie ?? "";
+    const cookie = header
+        .split(/;\s*/)
+        .find((c) => c.startsWith(`${IMPERSONATION_COOKIE_NAME}=`));
+    if (!cookie) return null;
+    const value = cookie.slice(IMPERSONATION_COOKIE_NAME.length + 1);
+    const dot = value.lastIndexOf(".");
+    if (dot <= 0) return null;
+    const payload = value.slice(0, dot);
+    const sig = value.slice(dot + 1);
+    const expected = crypto
+        .createHmac("sha256", impersonationSessionKey)
+        .update(payload)
+        .digest("base64url");
+    const sigBuf = Buffer.from(sig);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+    let claims;
+    try {
+        claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    } catch {
+        return null;
+    }
+    if ((claims.exp ?? 0) < Math.floor(Date.now() / 1000)) return null;
+    // Revocation check: the cookie is only honoured while its session is live.
+    const live = activeImpersonations.get(claims.sessionId);
+    if (!live) return null;
+    return live;
+}
+
+/**
+ * Resolve the customer to be impersonated by email. We never mint a token as them
+ * — this only confirms the subject is a real account and captures their oid/name
+ * for the audit trail and the impersonated view. Tries the sign-in identity (beta,
+ * unmasked via $filter) first, then the profile `mail`.
+ */
+async function findImpersonationSubject(email) {
+    const escaped = String(email).replace(/'/g, "''");
+    const probes = [
+        {
+            base: GRAPH_BETA,
+            filter: `identities/any(c:c/issuerAssignedId eq '${escaped}')`,
+        },
+        { base: GRAPH_BASE, filter: `mail eq '${escaped}'` },
+    ];
+    for (const probe of probes) {
+        const res = await callGraph(
+            "GET",
+            `/users?$select=id,displayName,mail,userPrincipalName&$filter=${encodeURIComponent(
+                probe.filter
+            )}&$top=2`,
+            undefined,
+            probe.base
+        );
+        if (res.ok) {
+            const users = res.json?.value ?? [];
+            if (users.length > 1) {
+                throw new HttpError(409, `More than one account matches ${email}; cannot impersonate ambiguously.`);
+            }
+            if (users.length === 1) {
+                const u = users[0];
+                return { oid: u.id, email: u.mail ?? email.toLowerCase(), name: u.displayName ?? null };
+            }
+        }
+    }
+    throw new HttpError(404, `No customer account found for ${email}.`);
+}
+
+/** Sticky red impersonation bar — always visible, names both parties (B4.2). */
+function impersonationBannerHtml(session) {
+    const subject = escapeHtml(session.subject?.email ?? session.subject?.oid ?? "unknown");
+    const actor = escapeHtml(session.actor?.email ?? session.actor?.oid ?? "an administrator");
+    const ends = new Date(session.expiresAt * 1000).toLocaleTimeString();
+    return `<div class="imp-bar">
+        <span class="imp-pill">IMPERSONATION</span>
+        <span>You (<strong>${actor}</strong>) are viewing <strong>${subject}</strong>&rsquo;s account</span>
+        <span class="imp-bar-meta">read-only · ends ${escapeHtml(ends)}</span>
+      </div>`;
+}
+
+/**
+ * Admin-only context box. This is the "things I can see *because* I'm an admin"
+ * the customer themselves would never see — it makes the impersonation explicit
+ * rather than just swapping in the customer's email.
+ */
+function impersonationAdminContextHtml(session) {
+    const row = (label, value) =>
+        `<tr><th>${escapeHtml(label)}</th><td>${value ? escapeHtml(String(value)) : "&mdash;"}</td></tr>`;
+    const subjectName = session.subject?.name ? ` (${session.subject.name})` : "";
+    return `<section class="imp-admin">
+        <p class="imp-admin-title">🛡 Administrator view — not visible to the customer</p>
+        <table class="imp-admin-table">
+          ${row("Signed in as (you)", session.actor?.email ?? session.actor?.oid)}
+          ${row("Impersonating", `${session.subject?.email ?? session.subject?.oid ?? "unknown"}${subjectName}`)}
+          ${row("Customer object id", session.subject?.oid)}
+          ${row("Access scope", session.scope)}
+          ${row("Justification on record", session.reason)}
+          ${row("Session id", session.sessionId)}
+          ${row("Started", new Date(session.startedAt * 1000).toLocaleString())}
+          ${row("Expires", new Date(session.expiresAt * 1000).toLocaleString())}
+        </table>
+      </section>`;
+}
+
+/** Cookie-gated HTML shown "as the impersonated customer would see the portal". */
+function impersonationViewHtml(session, { profile = false } = {}) {
+    const subjectEmail = escapeHtml(session.subject?.email ?? session.subject?.oid ?? "unknown");
+    const subjectName = escapeHtml(session.subject?.name ?? "—");
+    const body = profile
+        ? `<p>This is a <strong>second page</strong> of the impersonated customer&rsquo;s portal. You
+             navigated here carrying only the <code>HttpOnly</code> impersonation cookie — no token was
+             minted as the customer, and the session stayed attributed to you the whole time.</p>
+           <p><a href="/impersonate-view">&larr; Back to the customer&rsquo;s home</a></p>`
+        : `<section class="imp-customer">
+             <p class="imp-customer-title">Customer account — as ${subjectEmail} sees it</p>
+             <table class="imp-customer-table">
+               <tr><th>Name</th><td>${subjectName}</td></tr>
+               <tr><th>Email</th><td>${subjectEmail}</td></tr>
+             </table>
+             <p class="imp-customer-note">This panel shows the <strong>customer&rsquo;s</strong> data — what they
+               would see signed in normally. You&rsquo;re seeing it through a read-only impersonation session, not
+               as yourself.</p>
+           </section>
+           <p>This is an <strong>application session</strong>, not an Entra token: External ID has no supported
+             way to issue a token as another customer, so impersonation lives at the app layer with the audit +
+             revocation controls the portal enforces (plan B4.1/B4.2).</p>
+           <p><a href="/impersonate-view/profile">Go to a second page &rarr;</a> (proves the session persists
+             across navigation on the cookie alone).</p>`;
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Impersonated view — ${subjectEmail}</title>
+  <style>
+    html, body { margin:0; }
+    body {
+      font-family:'Nunito',-apple-system,'Segoe UI',Roboto,sans-serif; color:#292929; background:#fff;
+      /* Persistent red frame so it's unmistakable at every scroll position. */
+      border:0.375rem solid #b3261e; box-sizing:border-box; min-height:100vh;
+    }
+    .imp-bar {
+      position:sticky; top:0; z-index:10; background:#b3261e; color:#fff;
+      padding:0.6rem 1rem; font-weight:700; line-height:1.4;
+      display:flex; flex-wrap:wrap; gap:0.2rem 0.7rem; align-items:center;
+    }
+    .imp-pill { background:#fff; color:#b3261e; border-radius:1rem; padding:0.05rem 0.6rem; font-size:0.75rem; letter-spacing:0.04em; }
+    .imp-bar-meta { font-weight:400; opacity:0.95; }
+    header { background:#098851; color:#fff; padding:0.9rem 1.5rem; font-size:1.05rem; font-weight:700; }
+    main { padding:1.25rem 1.5rem; line-height:1.6; }
+    code { background:#f0f0f0; padding:0.1rem 0.3rem; border-radius:0.2rem; }
+    a { color:#267151; font-weight:700; }
+    .imp-admin { background:#fef6e7; border:0.0625rem solid #f0c674; border-left:0.25rem solid #b45309; padding:0.75rem 1rem; margin:0 0 1.25rem 0; }
+    .imp-admin-title { margin:0 0 0.5rem 0; font-weight:800; color:#92400e; }
+    .imp-admin-table, .imp-customer-table { border-collapse:collapse; width:100%; font-size:0.875rem; }
+    .imp-admin-table th, .imp-customer-table th { text-align:left; padding:0.2rem 0.75rem 0.2rem 0; color:#6b7280; font-weight:700; white-space:nowrap; vertical-align:top; }
+    .imp-admin-table td, .imp-customer-table td { padding:0.2rem 0; word-break:break-word; }
+    .imp-customer { border:0.0625rem solid #d1d5db; border-left:0.25rem solid #098851; padding:0.75rem 1rem; margin:0 0 1.25rem 0; background:#fafafa; }
+    .imp-customer-title { margin:0 0 0.5rem 0; font-weight:800; color:#098851; }
+    .imp-customer-note { margin:0.75rem 0 0 0; font-size:0.8125rem; color:#6b7280; }
+  </style>
+</head>
+<body>
+  ${impersonationBannerHtml(session)}
+  <header>Service Tasmania — customer portal</header>
+  <main>
+    ${impersonationAdminContextHtml(session)}
+    ${body}
+  </main>
+</body>
+</html>`;
+}
+
+function impersonationUnauthedHtml() {
+    return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<style>body{margin:0;font-family:'Nunito',-apple-system,'Segoe UI',sans-serif;color:#292929;padding:1.5rem;line-height:1.6;}</style>
+</head><body>
+  <p>No active impersonation session. An administrator must start one from the
+     RWVP portal first (and it may have expired or been revoked).</p>
+</body></html>`;
+}
+
+/**
+ * Handle the impersonation portal routes (Feature B / B4). Dispatched BEFORE the
+ * global Bearer-token gate: the view pages are an iframe navigation carrying only
+ * the impersonation cookie, and whoami/stop operate on that cookie. The mutating
+ * admin routes (start/revoke/audit) verify the admin's Bearer token themselves.
+ */
+async function handleImpersonation(req, res, route, url, corsHeaders) {
+    try {
+        // Cookie-gated view pages, loaded inside the portal's iframe.
+        if (
+            req.method === "GET" &&
+            (url.pathname === "/impersonate-view" || url.pathname === "/impersonate-view/profile")
+        ) {
+            const session = readImpersonationSession(req);
+            if (!session) {
+                res.writeHead(401, { "Content-Type": "text/html; charset=utf-8" });
+                res.end(impersonationUnauthedHtml());
+                return;
+            }
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(impersonationViewHtml(session, { profile: url.pathname.endsWith("/profile") }));
+            return;
+        }
+
+        // Who is currently being impersonated (cookie-based; no admin token needed
+        // — the portal reads this to render its banner + the embedded view).
+        if (route === "GET /api/impersonation/whoami") {
+            const session = readImpersonationSession(req);
+            if (!session) {
+                sendJson(res, 401, { error: { message: "No active impersonation session.", code: "no_session" } }, corsHeaders);
+                return;
+            }
+            sendJson(res, 200, { session: publicImpersonationSession(session) }, corsHeaders);
+            return;
+        }
+
+        // Stop impersonating. Always allowed (ending elevated access must never be
+        // blocked) and idempotent. Clears the cookie + removes from the registry.
+        if (route === "POST /api/impersonation/stop") {
+            const session = readImpersonationSession(req);
+            if (session) {
+                activeImpersonations.delete(session.sessionId);
+                recordImpersonationAudit("stop", session);
+            }
+            res.writeHead(200, {
+                "Content-Type": "application/json",
+                "Set-Cookie": clearImpersonationCookie(),
+                ...corsHeaders,
+            });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+        }
+
+        // Start an impersonation session — RBAC-gated.
+        if (route === "POST /api/impersonation/start") {
+            const admin = await verifyUserToken(req);
+            if (!isImpersonationAdmin(admin)) {
+                throw new HttpError(403, "You are not authorised to impersonate customers.", "not_admin");
+            }
+            const body = await parseJsonBody(req);
+            const subjectEmail = String(body.subjectEmail ?? "").trim();
+            const reason = String(body.reason ?? "").trim();
+            if (!EMAIL_RE.test(subjectEmail)) {
+                throw new HttpError(400, "Enter the customer's email address.");
+            }
+            if (reason.length < 5) {
+                throw new HttpError(400, "A justification (reason) is required and is recorded in the audit log.", "reason_required");
+            }
+            if (reason.length > 500) {
+                throw new HttpError(400, "Justification is too long (max 500 characters).");
+            }
+
+            const actor = actorIdentity(admin);
+            // Separation of duties: an admin can't impersonate their own account.
+            const actorEmail = actor.email?.toLowerCase();
+            if (actorEmail && actorEmail === subjectEmail.toLowerCase()) {
+                throw new HttpError(400, "You can't impersonate your own account.", "self_impersonation");
+            }
+
+            const subject = await findImpersonationSubject(subjectEmail);
+            if (subject.oid && subject.oid === actor.oid) {
+                throw new HttpError(400, "You can't impersonate your own account.", "self_impersonation");
+            }
+
+            const now = Math.floor(Date.now() / 1000);
+            const session = {
+                sessionId: crypto.randomUUID(),
+                actor,
+                subject,
+                reason,
+                scope: "read-only",
+                startedAt: now,
+                expiresAt: now + IMPERSONATION_TTL_SECONDS,
+            };
+            activeImpersonations.set(session.sessionId, session);
+            recordImpersonationAudit("start", session);
+
+            res.writeHead(200, {
+                "Content-Type": "application/json",
+                "Set-Cookie": makeImpersonationCookie(session),
+                ...corsHeaders,
+            });
+            res.end(JSON.stringify({ ok: true, session: publicImpersonationSession(session) }));
+            return;
+        }
+
+        // Revoke a live session by id — RBAC-gated (any admin can cut off another's
+        // session; that, plus the registry, is what makes revocation real).
+        if (route === "POST /api/impersonation/revoke") {
+            const admin = await verifyUserToken(req);
+            if (!isImpersonationAdmin(admin)) {
+                throw new HttpError(403, "You are not authorised to manage impersonation sessions.", "not_admin");
+            }
+            const body = await parseJsonBody(req);
+            const sessionId = String(body.sessionId ?? "").trim();
+            const live = activeImpersonations.get(sessionId);
+            if (!live) {
+                throw new HttpError(404, "No live session with that id (already ended or expired).");
+            }
+            activeImpersonations.delete(sessionId);
+            recordImpersonationAudit("revoke", { ...live, actor: actorIdentity(admin), subject: live.subject });
+            sendJson(res, 200, { ok: true }, corsHeaders);
+            return;
+        }
+
+        // Read the audit trail + currently-live sessions — RBAC-gated.
+        if (route === "GET /api/impersonation/audit") {
+            const admin = await verifyUserToken(req);
+            if (!isImpersonationAdmin(admin)) {
+                throw new HttpError(403, "You are not authorised to view the impersonation audit log.", "not_admin");
+            }
+            sendJson(
+                res,
+                200,
+                {
+                    active: [...activeImpersonations.values()].map(publicImpersonationSession),
+                    log: impersonationAudit,
+                },
+                corsHeaders
+            );
+            return;
+        }
+
+        throw new HttpError(404, "Not found.");
+    } catch (error) {
+        const status = error instanceof HttpError ? error.status : 500;
+        if (status === 500) console.error(error);
+        sendJson(res, status, { error: { message: error.message, code: error.code } }, corsHeaders);
+    }
+}
+
+/** Shape an internal session for the client (no signing material; same fields). */
+function publicImpersonationSession(session) {
+    return {
+        sessionId: session.sessionId,
+        actor: session.actor,
+        subject: session.subject,
+        reason: session.reason ?? null,
+        scope: session.scope ?? null,
+        startedAt: session.startedAt,
+        expiresAt: session.expiresAt,
+    };
+}
+
 /* ------------------------------ validation -------------------------------- */
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -743,13 +1401,22 @@ const PHONE_RE = /^\+[0-9][0-9\s]{6,17}$/;
 
 // Pin CORS to known dev origins rather than `*` — this proxy wields app-only
 // Graph permissions, so don't let arbitrary pages in the browser talk to it.
-// Two origins are in play: the account page runs on plain localhost, while the
-// passkey page is served from the auth.<tenant>.ciamlogin.com host (the WebAuthn
-// rp.id requires it). Reflect whichever allowlisted origin made the request.
+// Origins in play across the local modes:
+//   - http://localhost:3000                                  plain `npm run dev`
+//   - https://auth.<tenant>.ciamlogin.com:3000  App A on the unified HTTPS host
+//     (the WebAuthn rp.id requires this host; same registrable domain as the
+//     api.<tenant> proxy, so the webview cookie is first-party)
+//   - https://app-b.<tenant>.ciamlogin.com:3002 App B (the second relying party
+//     used by the B1/B3 cross-app SSO demos), also on the unified HTTPS host
+// Reflect whichever allowlisted origin made the request.
 const ALLOWED_ORIGINS = new Set(
     (
         process.env.PROXY_ALLOWED_ORIGINS ??
-        `http://localhost:3000,https://auth.${TENANT_SUBDOMAIN}.ciamlogin.com:3000`
+        [
+            "http://localhost:3000",
+            `https://auth.${TENANT_SUBDOMAIN}.ciamlogin.com:3000`,
+            `https://app-b.${TENANT_SUBDOMAIN}.ciamlogin.com:3002`,
+        ].join(",")
     )
         .split(",")
         .map((o) => o.trim())
@@ -765,6 +1432,10 @@ function corsHeadersFor(req) {
     return {
         "Access-Control-Allow-Origin": allowOrigin,
         Vary: "Origin",
+        // Credentials are needed so the webview session fetch can have its
+        // Set-Cookie stored (credentials: "include"); requires an explicit
+        // origin, never "*" — which is why ALLOWED_ORIGINS is pinned above.
+        "Access-Control-Allow-Credentials": "true",
         "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
         "Access-Control-Max-Age": "86400",
@@ -796,7 +1467,7 @@ async function parseJsonBody(req) {
     }
 }
 
-http.createServer(async (req, res) => {
+const handleRequest = async (req, res) => {
     const corsHeaders = corsHeadersFor(req);
 
     if (req.method === "OPTIONS") {
@@ -808,6 +1479,26 @@ http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${PORT}`);
     const route = `${req.method} ${url.pathname}`;
     console.log(`-> ${route}`);
+
+    // Webview SSO (Feature B / B2). Handled before the Bearer-token gate below:
+    // the content pages are an iframe navigation carrying only the session
+    // cookie, and the session endpoint runs its own token verification.
+    if (
+        url.pathname === "/api/webview/session" ||
+        url.pathname === "/webview" ||
+        url.pathname === "/webview/profile"
+    ) {
+        await handleWebview(req, res, route, url, corsHeaders);
+        return;
+    }
+
+    // Impersonation portal — RWVP (Feature B / B4). Handled before the Bearer-token
+    // gate too: the view pages ride only the impersonation cookie, whoami/stop
+    // operate on that cookie, and the admin routes verify their own Bearer token.
+    if (url.pathname.startsWith("/api/impersonation/") || url.pathname.startsWith("/impersonate-view")) {
+        await handleImpersonation(req, res, route, url, corsHeaders);
+        return;
+    }
 
     try {
         const user = await verifyUserToken(req);
@@ -920,9 +1611,51 @@ http.createServer(async (req, res) => {
         sendJson(res, status, { error: { message: error.message, code: error.code } }, corsHeaders);
     }
     // Loopback only — never expose an app-only Graph credential to the LAN.
-}).listen(PORT, "127.0.0.1", () => {
-    console.log(`Local Graph proxy listening on http://localhost:${PORT}`);
-    console.log(`  passkeys: /api/passkeys   account: /api/account`);
+};
+
+// HTTPS mode (`--https`, or PROXY_HTTPS=1) serves the proxy from
+// https://api.<tenant>.ciamlogin.com:3001 using the same self-signed cert as the
+// app's `dev:passkey` server. The unified HTTPS dev host needs this: a SIBLING
+// subdomain of the app over TLS, so the webview HttpOnly session cookie is
+// first-party inside the iframe (same registrable domain) and an https app page
+// can reach the proxy without a mixed-content block. Plain HTTP on localhost
+// stays the default for the `npm run dev` + `npm run proxy` mode. The cert (a SAN
+// covering auth./api./app-b.<tenant>.ciamlogin.com) is the one created in the
+// README "unified HTTPS" setup; certs/ is gitignored.
+const useHttps = process.argv.includes("--https") || process.env.PROXY_HTTPS === "1";
+const scheme = useHttps ? "https" : "http";
+const proxyHost = useHttps ? `api.${TENANT_SUBDOMAIN}.ciamlogin.com` : "localhost";
+
+function loadCerts() {
+    try {
+        return {
+            key: fs.readFileSync(new URL("./certs/auth-key.pem", import.meta.url)),
+            cert: fs.readFileSync(new URL("./certs/auth-cert.pem", import.meta.url)),
+        };
+    } catch {
+        console.error(
+            "HTTPS mode needs ./certs/auth-key.pem and ./certs/auth-cert.pem.\n" +
+                "Create the SAN cert from the README ('unified HTTPS' / passkey setup) first, " +
+                "or run plain `npm run proxy` (http://localhost:3001) instead."
+        );
+        process.exit(1);
+    }
+}
+
+const server = useHttps
+    ? https.createServer(loadCerts(), handleRequest)
+    : http.createServer(handleRequest);
+
+server.listen(PORT, "127.0.0.1", () => {
+    console.log(`Local Graph proxy listening on ${scheme}://${proxyHost}:${PORT}`);
+    console.log(`  passkeys: /api/passkeys   account: /api/account   webview: /webview   impersonation: /api/impersonation`);
+    console.log(
+        `  impersonation admins: ${
+            IMPERSONATION_ALLOW_ANY_ADMIN
+                ? "ANY signed-in user (IMPERSONATION_ALLOW_ANY_ADMIN=true — DEV ONLY)"
+                : [...IMPERSONATION_ADMIN_EMAILS, ...IMPERSONATION_ADMIN_OIDS].join(", ") || "none configured (set IMPERSONATION_ADMIN_EMAILS)"
+        }`
+    );
     console.log(`  CORS origins: ${[...ALLOWED_ORIGINS].join(", ")}`);
     console.log(`Graph user scope: tenant ${TENANT_SUBDOMAIN} (${TENANT_ID})`);
 });
