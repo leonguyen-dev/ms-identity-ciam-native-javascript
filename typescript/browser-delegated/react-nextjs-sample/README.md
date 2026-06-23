@@ -95,20 +95,27 @@ and host the app under it.
 1. **Tenant + app registration**: complete [`entra-config/README.md` §7](./entra-config/README.md)
    (enable the FIDO2 method, grant `UserAuthMethod-Passkey.ReadWrite.All`, create a
    client secret, add the dev redirect URI).
-2. **Hosts file** (as Administrator, `C:\Windows\System32\drivers\etc\hosts`):
+2. **Hosts file** (as Administrator, `C:\Windows\System32\drivers\etc\hosts`).
+   Passkeys alone need only the `auth.` host; add the `api.` and `app-b.` hosts
+   too if you want the single HTTPS dev host that runs **passkeys + webview SSO +
+   system-browser SSO together** (see "Run everything over HTTPS" below):
 
    ```text
    127.0.0.1    auth.myservicetasdevpoc.ciamlogin.com
+   127.0.0.1    api.myservicetasdevpoc.ciamlogin.com
+   127.0.0.1    app-b.myservicetasdevpoc.ciamlogin.com
    ```
 
-3. **Self-signed certificate** (Git Bash / anywhere with openssl, from this folder):
+3. **Self-signed certificate** (Git Bash / anywhere with openssl, from this folder).
+   Cover all three hosts with one SAN cert so the same `certs/` works for the app
+   (`auth.`), the HTTPS proxy (`api.`) and the second SSO app (`app-b.`):
 
    ```bash
    mkdir -p certs
    openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
      -keyout certs/auth-key.pem -out certs/auth-cert.pem \
      -subj "//CN=auth.myservicetasdevpoc.ciamlogin.com" \
-     -addext "subjectAltName=DNS:auth.myservicetasdevpoc.ciamlogin.com"
+     -addext "subjectAltName=DNS:auth.myservicetasdevpoc.ciamlogin.com,DNS:api.myservicetasdevpoc.ciamlogin.com,DNS:app-b.myservicetasdevpoc.ciamlogin.com,DNS:localhost"
    ```
 
    Then trust it (PowerShell **as Administrator**):
@@ -117,7 +124,8 @@ and host the app under it.
    certutil -addstore -f Root .\certs\auth-cert.pem
    ```
 
-   (`*.pem` is gitignored.)
+   (`*.pem` is gitignored. If you already made a single-host cert for passkeys,
+   re-run the command above to regenerate it with all the SANs, then re-trust it.)
 4. **Client secret**: create `.env.local` in this folder (gitignored). The proxy
    accepts `ACCOUNT_CLIENT_SECRET` (shared with the My account page) or, for
    back-compat, `PASSKEY_CLIENT_SECRET`:
@@ -159,8 +167,104 @@ Open **`https://auth.myservicetasdevpoc.ciamlogin.com:3000`**, sign in, then go 
   served under the same registrable domain.
 - Passkeys are **not** available to the native-auth sample: native auth APIs don't
   support passkeys yet (browser-delegated only).
-The optional **My account** page uses the same local proxy (`npm run proxy`) as
-passkeys — see below.
+
+## Run everything over HTTPS (unified dev host)
+
+`npm run dev` + `npm run proxy` run everything on plain `localhost`, which is the
+simplest mode for the webview, account, and impersonation demos. But `localhost`
+**can't** serve passkey *registration* (WebAuthn needs the `ciamlogin.com` rp
+host), and the passkey-only `npm run dev:passkey` host in turn **breaks** webview
+and system-browser SSO — the `localhost:3001` proxy becomes cross-site + plain
+HTTP relative to the `https://auth.…ciamlogin.com:3000` app, so the webview's
+`HttpOnly` cookie is third-party (blocked) and the http proxy is a mixed-content
+block.
+
+This mode fixes that by putting **every** piece on one registrable domain over
+HTTPS, so all three SSO features and passkeys work at once:
+
+| Piece | Host | Script |
+|---|---|---|
+| App A (primary) | `https://auth.myservicetasdevpoc.ciamlogin.com:3000` | `npm run dev:passkey` |
+| Graph / webview proxy | `https://api.myservicetasdevpoc.ciamlogin.com:3001` | `npm run proxy:https` |
+| App B (SSO peer) | `https://app-b.myservicetasdevpoc.ciamlogin.com:3002` | `npm run dev:appB:https` |
+
+Because the proxy (`api.`) is now a **sibling subdomain** of the app (`auth.`),
+they share the registrable domain `…ciamlogin.com`, so the webview session cookie
+is **first-party** in the iframe (`SameSite=Lax` is enough — exactly the same-site
+property `localhost:3000`/`:3001` had), and HTTPS↔HTTPS removes the mixed-content
+block. App B on `app-b.` is a second relying party for the B1/B3 cross-app SSO
+demos. The app resolves the proxy origin automatically from its own host
+([`auth-config.ts` `resolveProxyOrigin`](./src/config/auth-config.ts)) — no
+`NEXT_PUBLIC_*_API_BASE` needed locally.
+
+### One-time setup
+
+Do the passkey [one-time local setup](#one-time-local-setup) first, but make sure
+the **hosts file has all three entries** and the **cert SAN covers all three
+hosts** (both shown in that section).
+
+### Run (three terminals + a fourth for App B's env)
+
+```powershell
+# Terminal 1 — HTTPS Graph/webview proxy on api.<tenant>.ciamlogin.com:3001
+npm run proxy:https
+
+# Terminal 2 — App A on auth.<tenant>.ciamlogin.com:3000, pointing at App B for SSO
+$env:NEXT_PUBLIC_PEER_APP_URL = "https://app-b.myservicetasdevpoc.ciamlogin.com:3002"
+$env:NEXT_PUBLIC_PEER_APP_LABEL = "App B"
+npm run dev:passkey
+
+# Terminal 3 — App B (second client id) on app-b.<tenant>.ciamlogin.com:3002
+$env:NEXT_PUBLIC_CLIENT_ID = "<APP_B_CLIENT_ID>"
+$env:NEXT_PUBLIC_APP_LABEL = "App B"
+$env:NEXT_DIST_DIR = ".next-appB"   # separate build dir; two dev servers can't share .next/dev
+npm run dev:appB:https
+```
+
+Then open **`https://auth.myservicetasdevpoc.ciamlogin.com:3000`** and you can
+exercise **all** of: passkeys (Security), webview SSO, and system-browser SSO
+(handoff to App B) from the one host. The B1 web↔web SSO link (**Open App B
+(SSO)**) also works here.
+
+Notes / prerequisites:
+
+- App B needs its **own SPA app registration** on the same tenant, bound to the
+  same user flow, with redirect URI
+  `https://app-b.myservicetasdevpoc.ciamlogin.com:3002/` (and App A needs
+  `https://auth.myservicetasdevpoc.ciamlogin.com:3000/`).
+- If you only want passkeys + webview (no system-browser SSO), skip Terminal 3 and
+  the `NEXT_PUBLIC_PEER_APP_URL` line — the handoff button just stays disabled.
+- The proxy's CORS allowlist already includes the `auth.` and `app-b.` HTTPS
+  origins; override with `PROXY_ALLOWED_ORIGINS` if you use different hosts.
+
+### Troubleshooting: `EADDRINUSE` on 3000 / 3001 / 3002
+
+Because this mode runs three long-lived servers, a leftover dev server from a
+previous session often keeps holding its port, so the next start fails with
+`Error: listen EADDRINUSE: address already in use :::3002` (or `:3000` / `:3001`).
+Find the process on the port and stop it, then re-run the command (set the App B
+env vars again in that terminal first — they don't survive a failed start):
+
+```powershell
+# Identify what's on the port (swap 3002 for 3000 / 3001 as needed)
+Get-NetTCPConnection -LocalPort 3002 -State Listen |
+  ForEach-Object { Get-Process -Id $_.OwningProcess } |
+  Select-Object Id, ProcessName, Path, StartTime
+
+# Confirm it's this project's dev server before killing it
+(Get-CimInstance Win32_Process -Filter "ProcessId = <PID>").CommandLine
+
+# Free the port
+Stop-Process -Id <PID> -Force
+```
+
+The dev server is `…\react-nextjs-sample\node_modules\next\dist\server\lib\start-server.js`
+(App A/B) or `node local-proxy.mjs` (the proxy) — safe to kill. After freeing
+3002, re-run the App B block (it sets `NEXT_PUBLIC_CLIENT_ID`, `NEXT_PUBLIC_APP_LABEL`,
+`NEXT_DIST_DIR`, then `npm run dev:appB:https`).
+
+The optional **My account** page uses the same local proxy (`npm run proxy`, or
+`npm run proxy:https` in this mode) as passkeys — see below.
 
 ## My account (change password / sign-in name / phone)
 
@@ -385,6 +489,11 @@ npm run proxy   # terminal 1 — web resource backend on http://localhost:3001
 npm run dev     # terminal 2 — app on http://localhost:3000
 ```
 
+> To run webview SSO **and** passkeys from one host, use the
+> [unified HTTPS dev host](#run-everything-over-https-unified-dev-host) instead
+> (`npm run proxy:https` + `npm run dev:passkey`) — plain `localhost` can't serve
+> passkey registration, and `dev:passkey` alone can't serve webview SSO.
+
 Sign in, then open **Webview SSO** in the navbar (or go to
 <http://localhost:3000/webview>). The page acquires a token, establishes the
 session, and the embedded webview renders **signed in with no second prompt**.
@@ -440,6 +549,11 @@ interactive `loginRedirect` seeded with the hint.
 Use the **same two-instance setup as B1** (App A on :3000, App B on :3002 — see
 "Run two instances locally" above), so the handoff target is a *separate* app
 with its own MSAL cache:
+
+> To exercise this alongside passkeys and webview SSO from one HTTPS host, use the
+> [unified HTTPS dev host](#run-everything-over-https-unified-dev-host) instead —
+> it runs App A (`dev:passkey`) and App B (`dev:appB:https`) as the two instances
+> over HTTPS, with the peer URL pointing at the `app-b.` host.
 
 1. In App A's terminal, point it at App B as the peer (App A already does this in
    the B1 setup):

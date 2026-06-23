@@ -173,17 +173,46 @@ export const logoutRequest: EndSessionRequest = {};
  * ------------------------------------------------------------------------- */
 
 /**
+ * The local-proxy port and a host-aware resolver for its origin, so a SINGLE
+ * build works in every local mode with no env wiring:
+ *
+ *  - plain `localhost` (`npm run dev` + `npm run proxy`)
+ *      → http://localhost:3001
+ *  - the unified HTTPS dev hosts (`npm run dev:passkey` + `npm run proxy:https`),
+ *    where the app is served from `*.<tenant>.ciamlogin.com`. The proxy must be a
+ *    SIBLING subdomain (`api.<tenant>.ciamlogin.com`) so it shares the app's
+ *    registrable domain: that keeps the webview HttpOnly session cookie
+ *    FIRST-PARTY inside the iframe (SameSite=Lax), and HTTPS↔HTTPS sidesteps the
+ *    mixed-content block an http proxy would hit from an https page.
+ *      → https://api.<tenant>.ciamlogin.com:3001
+ *
+ * A build-time `NEXT_PUBLIC_*_API_BASE` always wins (production points these at a
+ * real backend). Resolved at call time, not import time, because it reads
+ * `window.location`.
+ */
+const PROXY_PORT = 3001;
+
+function resolveProxyOrigin(): string {
+    if (typeof window === "undefined") return `http://localhost:${PROXY_PORT}`;
+    const host = window.location.hostname;
+    const rpId = `${TENANT_SUBDOMAIN}.ciamlogin.com`;
+    if (host === rpId || host.endsWith(`.${rpId}`)) {
+        return `https://api.${rpId}:${PROXY_PORT}`;
+    }
+    return `http://localhost:${PROXY_PORT}`;
+}
+
+/**
  * Origin of the web resource shown inside the webview (the local proxy in dev;
  * an Azure Function / web app in production via NEXT_PUBLIC_WEBVIEW_API_BASE).
  * The demo page (app/webview/page.tsx) POSTs the signed-in user's token to
- * `${webviewProxyBase}/api/webview/session` to establish an HttpOnly session
- * cookie, then loads `${webviewProxyBase}/webview` in the iframe.
- *
- * NOTE this is the proxy ORIGIN (no `/api` suffix) because the webview content
- * pages live at `/webview`, not `/api/webview`.
+ * `${webviewProxyBase()}/api/webview/session` to establish an HttpOnly session
+ * cookie, then loads `${webviewProxyBase()}/webview` in the iframe. ORIGIN only
+ * (no `/api` suffix): the webview content pages live at `/webview`.
  */
-export const webviewProxyBase =
-    process.env.NEXT_PUBLIC_WEBVIEW_API_BASE ?? "http://localhost:3001";
+export function webviewProxyBase(): string {
+    return process.env.NEXT_PUBLIC_WEBVIEW_API_BASE ?? resolveProxyOrigin();
+}
 
 /**
  * Whether the webview SSO demo can work where the app is running. Like the
@@ -225,16 +254,18 @@ export function signInHintFromClaims(claims?: Record<string, unknown>): string |
  * The backend enforces the admin allow-list, the read-only scope, the bounded TTL,
  * revocation, and the audit log (plan B4.1/B4.2). Includes the `/api` suffix.
  */
-export const impersonationApiBase =
-    process.env.NEXT_PUBLIC_IMPERSONATION_API_BASE ?? "http://localhost:3001/api";
+export function impersonationApiBase(): string {
+    return process.env.NEXT_PUBLIC_IMPERSONATION_API_BASE ?? `${resolveProxyOrigin()}/api`;
+}
 
 /**
  * Origin of the impersonated-view content pages (`/impersonate-view`), shown in the
  * portal's embedded iframe. Proxy ORIGIN (no `/api`) because those pages live at
  * `/impersonate-view`, not under `/api`.
  */
-export const impersonationViewBase =
-    process.env.NEXT_PUBLIC_IMPERSONATION_VIEW_BASE ?? "http://localhost:3001";
+export function impersonationViewBase(): string {
+    return process.env.NEXT_PUBLIC_IMPERSONATION_VIEW_BASE ?? resolveProxyOrigin();
+}
 
 /**
  * Whether the impersonation portal can work where the app is running. Like the
@@ -260,7 +291,9 @@ export function impersonationFeatureAvailable(): boolean {
  * self-service permission for external-tenant customers yet), so the proxy holds
  * the client secret + Graph token server-side and the SPA never sees them.
  */
-export const passkeyApiBase = "http://localhost:3001/api";
+export function passkeyApiBase(): string {
+    return process.env.NEXT_PUBLIC_PASSKEY_API_BASE ?? `${resolveProxyOrigin()}/api`;
+}
 
 /**
  * The relying-party id passkeys are registered against (creationOptions.rp.id).
@@ -290,8 +323,9 @@ export const passkeyRpId = `${TENANT_SUBDOMAIN}.ciamlogin.com`;
  * the Graph user id from its `oid`, so a caller can only manage their own
  * account.
  */
-export const accountApiBase =
-    process.env.NEXT_PUBLIC_ACCOUNT_API_BASE ?? "http://localhost:3001/api";
+export function accountApiBase(): string {
+    return process.env.NEXT_PUBLIC_ACCOUNT_API_BASE ?? `${resolveProxyOrigin()}/api`;
+}
 
 /**
  * Whether the account self-service feature can work where the app is running.

@@ -63,7 +63,7 @@ async function callImpersonationApi(
 ): Promise<unknown> {
     let response: Response;
     try {
-        response = await fetch(`${impersonationApiBase}${path}`, {
+        response = await fetch(`${impersonationApiBase()}${path}`, {
             ...init,
             // The HttpOnly impersonation cookie must be sent/stored across these
             // calls (whoami/stop rely on it; start sets it).
@@ -159,5 +159,5 @@ export async function fetchImpersonationAudit(bearerToken: string): Promise<Impe
 export function impersonationViewUrl(
     path: "/impersonate-view" | "/impersonate-view/profile" = "/impersonate-view"
 ): string {
-    return `${impersonationViewBase}${path}`;
+    return `${impersonationViewBase()}${path}`;
 }

@@ -73,6 +73,7 @@
 
 import fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 import crypto from "node:crypto";
 import { EmailClient } from "@azure/communication-email";
@@ -1400,13 +1401,22 @@ const PHONE_RE = /^\+[0-9][0-9\s]{6,17}$/;
 
 // Pin CORS to known dev origins rather than `*` — this proxy wields app-only
 // Graph permissions, so don't let arbitrary pages in the browser talk to it.
-// Two origins are in play: the account page runs on plain localhost, while the
-// passkey page is served from the auth.<tenant>.ciamlogin.com host (the WebAuthn
-// rp.id requires it). Reflect whichever allowlisted origin made the request.
+// Origins in play across the local modes:
+//   - http://localhost:3000                                  plain `npm run dev`
+//   - https://auth.<tenant>.ciamlogin.com:3000  App A on the unified HTTPS host
+//     (the WebAuthn rp.id requires this host; same registrable domain as the
+//     api.<tenant> proxy, so the webview cookie is first-party)
+//   - https://app-b.<tenant>.ciamlogin.com:3002 App B (the second relying party
+//     used by the B1/B3 cross-app SSO demos), also on the unified HTTPS host
+// Reflect whichever allowlisted origin made the request.
 const ALLOWED_ORIGINS = new Set(
     (
         process.env.PROXY_ALLOWED_ORIGINS ??
-        `http://localhost:3000,https://auth.${TENANT_SUBDOMAIN}.ciamlogin.com:3000`
+        [
+            "http://localhost:3000",
+            `https://auth.${TENANT_SUBDOMAIN}.ciamlogin.com:3000`,
+            `https://app-b.${TENANT_SUBDOMAIN}.ciamlogin.com:3002`,
+        ].join(",")
     )
         .split(",")
         .map((o) => o.trim())
@@ -1457,7 +1467,7 @@ async function parseJsonBody(req) {
     }
 }
 
-http.createServer(async (req, res) => {
+const handleRequest = async (req, res) => {
     const corsHeaders = corsHeadersFor(req);
 
     if (req.method === "OPTIONS") {
@@ -1601,8 +1611,43 @@ http.createServer(async (req, res) => {
         sendJson(res, status, { error: { message: error.message, code: error.code } }, corsHeaders);
     }
     // Loopback only — never expose an app-only Graph credential to the LAN.
-}).listen(PORT, "127.0.0.1", () => {
-    console.log(`Local Graph proxy listening on http://localhost:${PORT}`);
+};
+
+// HTTPS mode (`--https`, or PROXY_HTTPS=1) serves the proxy from
+// https://api.<tenant>.ciamlogin.com:3001 using the same self-signed cert as the
+// app's `dev:passkey` server. The unified HTTPS dev host needs this: a SIBLING
+// subdomain of the app over TLS, so the webview HttpOnly session cookie is
+// first-party inside the iframe (same registrable domain) and an https app page
+// can reach the proxy without a mixed-content block. Plain HTTP on localhost
+// stays the default for the `npm run dev` + `npm run proxy` mode. The cert (a SAN
+// covering auth./api./app-b.<tenant>.ciamlogin.com) is the one created in the
+// README "unified HTTPS" setup; certs/ is gitignored.
+const useHttps = process.argv.includes("--https") || process.env.PROXY_HTTPS === "1";
+const scheme = useHttps ? "https" : "http";
+const proxyHost = useHttps ? `api.${TENANT_SUBDOMAIN}.ciamlogin.com` : "localhost";
+
+function loadCerts() {
+    try {
+        return {
+            key: fs.readFileSync(new URL("./certs/auth-key.pem", import.meta.url)),
+            cert: fs.readFileSync(new URL("./certs/auth-cert.pem", import.meta.url)),
+        };
+    } catch {
+        console.error(
+            "HTTPS mode needs ./certs/auth-key.pem and ./certs/auth-cert.pem.\n" +
+                "Create the SAN cert from the README ('unified HTTPS' / passkey setup) first, " +
+                "or run plain `npm run proxy` (http://localhost:3001) instead."
+        );
+        process.exit(1);
+    }
+}
+
+const server = useHttps
+    ? https.createServer(loadCerts(), handleRequest)
+    : http.createServer(handleRequest);
+
+server.listen(PORT, "127.0.0.1", () => {
+    console.log(`Local Graph proxy listening on ${scheme}://${proxyHost}:${PORT}`);
     console.log(`  passkeys: /api/passkeys   account: /api/account   webview: /webview   impersonation: /api/impersonation`);
     console.log(
         `  impersonation admins: ${

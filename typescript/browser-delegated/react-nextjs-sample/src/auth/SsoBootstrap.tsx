@@ -8,10 +8,11 @@ import { loginRequest, silentRequest } from "@/config/auth-config";
 /**
  * Cross-app SSO bootstrap (Feature B / B1 — the `id_token_hint` replacement).
  *
- * Renders nothing. When this app is opened as an SSO target (a peer app linked
- * here with `?sso=1` and usually a `login_hint`), it tries to establish a
- * session WITHOUT any interactive prompt, using the shared Entra session on
- * ciamlogin.com:
+ * Renders nothing. On EVERY load, whenever this app opens unauthenticated it
+ * tries to establish a session WITHOUT any interactive prompt, using the shared
+ * Entra session on ciamlogin.com. This is no longer gated on `?sso=1`; that
+ * query (and an optional `login_hint`) is still honoured to seed the attempt
+ * when a peer app links here, but its absence no longer skips the silent path:
  *
  *   1. `ssoSilent` — a hidden iframe to the authorize endpoint. Works only while
  *      the session cookie is readable in a third-party (iframe) context, so it
@@ -36,12 +37,13 @@ import { loginRequest, silentRequest } from "@/config/auth-config";
  * resolve silently via the B1 path, which a real native app never can.
  *
  * Loop guard: msalConfig has `navigateToLoginRequestUrl: true`, so after a failed
- * prompt=none redirect MSAL returns to the ORIGINAL url — which still carries
- * `?sso=1` — which would re-trigger this bootstrap forever. A sessionStorage
- * marker (which survives that navigation, unlike a ref) ensures we attempt at
- * most once per SSO entry: on the post-failure return we detect the marker, stop,
- * and strip the SSO query so the page settles on the signed-out view. A fresh
- * click on an SSO link starts a clean attempt.
+ * prompt=none redirect MSAL returns to the ORIGINAL url, which would re-trigger
+ * this bootstrap forever. A sessionStorage marker (which survives that navigation,
+ * unlike a ref) ensures we attempt at most once per page session: on the
+ * post-failure return we detect the marker, stop, and strip any SSO query so the
+ * page settles on the signed-out view. A fresh load (new tab / reload) clears the
+ * marker and starts a clean attempt — so silent SSO is retried each time the app
+ * is opened, but never loops within a single entry.
  */
 const SSO_ATTEMPT_KEY = "sso-bootstrap-attempted";
 
@@ -82,8 +84,10 @@ export function SsoBootstrap() {
 
         const params = new URLSearchParams(window.location.search);
         const wantHandoff = params.has("handoff");
-        const wantSso = params.has("sso") || params.has("login_hint");
-        if (!wantHandoff && !wantSso) return;
+        // Silent SSO is attempted on every load — no longer gated on `?sso=1`.
+        // We only get here when unauthenticated (the isAuthenticated branch above
+        // returns first), so an unprompted attempt to resume the shared session is
+        // always the right move. The handoff path stays explicitly opt-in.
 
         handled.current = true;
 

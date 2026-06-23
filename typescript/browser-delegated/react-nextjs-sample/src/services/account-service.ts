@@ -42,7 +42,7 @@ async function callAccountApi(
 ): Promise<unknown> {
     let response: Response;
     try {
-        response = await fetch(`${accountApiBase}${path}`, {
+        response = await fetch(`${accountApiBase()}${path}`, {
             ...init,
             headers: {
                 "Content-Type": "application/json",

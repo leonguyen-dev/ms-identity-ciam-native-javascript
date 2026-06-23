@@ -27,14 +27,14 @@ export interface WebviewSessionUser {
 export async function establishWebviewSession(bearerToken: string): Promise<WebviewSessionUser> {
     let response: Response;
     try {
-        response = await fetch(`${webviewProxyBase}/api/webview/session`, {
+        response = await fetch(`${webviewProxyBase()}/api/webview/session`, {
             method: "POST",
             credentials: "include",
             headers: { Authorization: `Bearer ${bearerToken}` },
         });
     } catch {
         throw new Error(
-            "Could not reach the local proxy. Start it with `npm run proxy` (see README, 'Native app → webview SSO' section)."
+            "Could not reach the local proxy. Start it with `npm run proxy` (or `npm run proxy:https` on the unified HTTPS host) — see README, 'Native app → webview SSO' section."
         );
     }
 
@@ -54,5 +54,5 @@ export async function establishWebviewSession(bearerToken: string): Promise<Webv
 
 /** URL of the in-app web content to load in the webview iframe. */
 export function webviewContentUrl(path: "/webview" | "/webview/profile" = "/webview"): string {
-    return `${webviewProxyBase}${path}`;
+    return `${webviewProxyBase()}${path}`;
 }

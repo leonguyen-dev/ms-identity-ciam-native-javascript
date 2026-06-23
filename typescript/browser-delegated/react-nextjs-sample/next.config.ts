@@ -14,10 +14,16 @@ const nextConfig: NextConfig = {
   output: "export",
   // Emit each route as <route>/index.html so SWA resolves deep links cleanly.
   trailingSlash: true,
-  // Passkey registration requires serving the dev app at a subdomain of the
-  // tenant's relying-party domain (hosts-file mapping to 127.0.0.1) — allow that
-  // origin to talk to the dev server. See README, "Passkeys".
-  allowedDevOrigins: ["auth.myservicetasdevpoc.ciamlogin.com"],
+  // The unified HTTPS dev host serves the app from subdomains of the tenant's
+  // relying-party domain (hosts-file mappings to 127.0.0.1), not localhost, so
+  // Next's cross-origin dev-server guard would otherwise block HMR and other
+  // internal dev requests (the `_next/webpack-hmr` WebSocket fails). Allow both
+  // app hosts: `auth.` (App A / passkeys) and `app-b.` (App B / cross-app SSO).
+  // See README, "Run everything over HTTPS (unified dev host)".
+  allowedDevOrigins: [
+    "auth.myservicetasdevpoc.ciamlogin.com",
+    "app-b.myservicetasdevpoc.ciamlogin.com",
+  ],
   images: {
     unoptimized: true,
   },
