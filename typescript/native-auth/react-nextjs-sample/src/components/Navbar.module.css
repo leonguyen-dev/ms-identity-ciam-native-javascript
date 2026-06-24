@@ -40,7 +40,7 @@
 
 .link {
     text-decoration: none;
-    color: #292929;
+    color: rgb(38, 113, 81);
     font-weight: 700;
     padding: 0.5rem 1rem;
     transition: color 0.15s ease, background-color 0.15s ease;
@@ -49,5 +49,28 @@
 
 .link:hover {
     background-color: #f5f5f5;
+    color: #267151;
+}
+
+.help {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.helpText {
+    color: #292929;
+    font-weight: 600;
+    font-family: var(--font-nunito), 'Nunito', sans-serif;
+}
+
+.navbar a.contactLink {
+    color: rgb(38, 113, 81);
+    font-weight: 800;
+    text-decoration: underline;
+    font-family: var(--font-nunito), 'Nunito', sans-serif;
+}
+
+.navbar a.contactLink:hover {
     color: #267151;
 }

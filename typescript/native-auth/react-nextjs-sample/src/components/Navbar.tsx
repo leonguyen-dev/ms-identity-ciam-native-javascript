@@ -69,17 +69,15 @@ export default function Navbar() {
             </Link>
             <div className={styles.links}>
                 {!isSignedIn && (
-                    <>
-                        <Link href="/" className={styles.link}>
-                            Sign In
-                        </Link>
-                        <Link href="/sign-up" className={styles.link}>
-                            Sign Up
-                        </Link>
-                        <Link href="/reset-password" className={styles.link}>
-                            Reset Password
-                        </Link>
-                    </>
+                    <div className={styles.help}>
+                        <span className={styles.helpText}>Need help?</span>
+                        <a
+                            href="https://portal.my.service.tas.gov.au/contactus/"
+                            className={styles.contactLink}
+                        >
+                            Contact us
+                        </a>
+                    </div>
                 )}
                 {isSignedIn && (
                     <>
