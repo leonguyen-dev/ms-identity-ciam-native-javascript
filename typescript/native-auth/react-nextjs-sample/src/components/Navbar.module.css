@@ -52,6 +52,27 @@
     color: #267151;
 }
 
+.signOutButton {
+    background: transparent;
+    border: 1px solid var(--st-primary, #267151);
+    border-radius: 0;
+    padding: 0.5rem 1.25rem;
+    cursor: pointer;
+    color: var(--st-primary, #267151);
+    font-family: var(--font-nunito), 'Nunito', sans-serif;
+    font-weight: 700;
+    font-size: 1rem;
+    appearance: none;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.signOutButton:hover,
+.signOutButton:focus {
+    background-color: var(--st-primary, #267151);
+    color: #ffffff;
+    outline: none;
+}
+
 .help {
     display: flex;
     align-items: center;
