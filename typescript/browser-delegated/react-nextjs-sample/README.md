@@ -210,6 +210,7 @@ hosts** (both shown in that section).
 npm run proxy:https
 
 # Terminal 2 — App A on auth.<tenant>.ciamlogin.com:3000, pointing at App B for SSO
+Remove-Item Env:NEXT_DIST_DIR, Env:NEXT_PUBLIC_CLIENT_ID, Env:NEXT_PUBLIC_APP_LABEL -ErrorAction SilentlyContinue
 $env:NEXT_PUBLIC_PEER_APP_URL = "https://app-b.myservicetasdevpoc.ciamlogin.com:3002"
 $env:NEXT_PUBLIC_PEER_APP_LABEL = "App B"
 npm run dev:passkey
@@ -262,6 +263,54 @@ The dev server is `…\react-nextjs-sample\node_modules\next\dist\server\lib\sta
 (App A/B) or `node local-proxy.mjs` (the proxy) — safe to kill. After freeing
 3002, re-run the App B block (it sets `NEXT_PUBLIC_CLIENT_ID`, `NEXT_PUBLIC_APP_LABEL`,
 `NEXT_DIST_DIR`, then `npm run dev:appB:https`).
+
+### Troubleshooting: App B's env vars leaking into App A's terminal
+
+App B's run block sets four session variables — `NEXT_DIST_DIR`,
+`NEXT_PUBLIC_CLIENT_ID`, `NEXT_PUBLIC_APP_LABEL` (and `PORT` in the plain-localhost
+mode). PowerShell `$env:` variables persist for the **whole session**, so once
+you've run the App B block in a terminal, every later `npm run` in that *same*
+terminal inherits them. Start App A in that terminal and it boots as App B. This
+shows up two ways, both with the same root cause:
+
+**1. `Another next dev server is already running` — App B exits.** App B prints
+`✓ Ready` on `https://localhost:3002`, then immediately dies:
+
+```text
+⨯ Another next dev server is already running.
+- Local:        http://localhost:3000      ← the conflict is App A, not another App B
+- PID:          <pid>
+Run taskkill /PID <pid> /F to stop it.
+```
+
+Next takes an exclusive lock at `<distDir>/lock`
+([`next/dist/server/lib/router-utils/setup-dev-bundler.js`](./node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js)
+→ `Lockfile.acquireWithRetriesOrExit(path.join(distDir, 'lock'), …)`). App B uses
+`distDir = .next-appB` precisely so its lock is separate from App A's `.next`. The
+collision means **both apps resolved to the same `distDir`** — leaked
+`NEXT_DIST_DIR=.next-appB` made App A grab `.next-appB/lock` first. (Telltale: App A
+came up on **`http://localhost:3000`** from a plain `npm run dev` instead of
+**`https://localhost:3000`** from `dev:passkey`.)
+
+**2. `AADSTS50011: redirect URI … does not match`** for client id
+`189164f4-…` (App B's). Leaked `NEXT_PUBLIC_CLIENT_ID` made App A boot as App B's
+relying party, but App B's registration only allows the `app-b.…:3002/` redirect
+URI — not App A's `auth.…:3000/`. (`NEXT_PUBLIC_*` is baked in when the dev server
+compiles, so you must **restart** App A after clearing it, not just reload the page.)
+
+**Fix:** App A's terminal must use the defaults — never set any App B var there. Use
+a **fresh terminal per app**, or clear the leaked values before starting App A:
+
+```powershell
+# App A terminal — clear any leaked App B vars, then run the HTTPS script
+Remove-Item Env:NEXT_DIST_DIR, Env:NEXT_PUBLIC_CLIENT_ID, Env:NEXT_PUBLIC_APP_LABEL -ErrorAction SilentlyContinue
+$env:NEXT_PUBLIC_PEER_APP_URL   = "https://app-b.myservicetasdevpoc.ciamlogin.com:3002"
+$env:NEXT_PUBLIC_PEER_APP_LABEL = "App B"
+npm run dev:passkey       # must report https://localhost:3000, client id 5f0a52ca-…
+```
+
+Then start App B (with its own vars) in its **own** terminal. The rule of thumb:
+**only App B's terminal ever sets `NEXT_DIST_DIR` / `NEXT_PUBLIC_CLIENT_ID`.**
 
 The optional **My account** page uses the same local proxy (`npm run proxy`, or
 `npm run proxy:https` in this mode) as passkeys — see below.
