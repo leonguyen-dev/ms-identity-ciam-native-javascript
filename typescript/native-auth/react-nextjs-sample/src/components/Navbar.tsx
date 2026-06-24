@@ -50,7 +50,7 @@ export default function Navbar() {
         <nav className={styles.navbar}>
             <Link href="/" className={styles.logo} aria-label="Service Tasmania home">
                 <Image
-                    src="/logos/tasmania-govt-black.svg"
+                    src="/logos/tasmania-govt-green.svg"
                     alt="Tasmanian Government"
                     width={54}
                     height={50}
@@ -59,7 +59,7 @@ export default function Navbar() {
                 />
                 <span className={styles.logoDivider} aria-hidden="true" />
                 <Image
-                    src="/logos/service-tasmania-black.svg"
+                    src="/logos/service-tasmania-green.svg"
                     alt="Service Tasmania"
                     width={118}
                     height={48}
