@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Nunito } from "next/font/google";
 import Navbar from "@/components/Navbar";
+import Footer from "@/components/Footer";
 import { AuthProvider } from "@/auth/AuthProvider";
 import { SsoBootstrap } from "@/auth/SsoBootstrap";
 import "./globals.css";
@@ -30,6 +31,7 @@ export default function RootLayout({
           <SsoBootstrap />
           <Navbar />
           {children}
+          <Footer />
         </AuthProvider>
       </body>
     </html>
