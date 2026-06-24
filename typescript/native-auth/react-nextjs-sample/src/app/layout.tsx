@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Nunito } from "next/font/google";
 import Navbar from "@/components/Navbar";
+import Footer from "@/components/Footer";
 import { AuthClientProvider } from "@/auth/AuthClientProvider";
 import "./globals.css";
 
@@ -28,6 +29,7 @@ export default function RootLayout({
         <AuthClientProvider>
           <Navbar />
           {children}
+          <Footer />
         </AuthClientProvider>
       </body>
     </html>
