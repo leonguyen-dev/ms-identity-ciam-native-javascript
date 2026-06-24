@@ -28,7 +28,7 @@ export default function RootLayout({
       <body className={nunito.variable}>
         <AuthClientProvider>
           <Navbar />
-          {children}
+          <div style={{ flex: 1 }}>{children}</div>
           <Footer />
         </AuthClientProvider>
       </body>

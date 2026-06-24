@@ -1,8 +1,6 @@
 "use client";
 
 import Image from "next/image";
-import { useIsAuthenticated, useMsal } from "@azure/msal-react";
-import { InteractionStatus } from "@azure/msal-browser";
 import styles from "./Footer.module.css";
 
 function ServiceCentreIcon() {
@@ -48,7 +46,7 @@ function InterpreterIcon() {
                     id="interpreter-icon_b"
                     width="100"
                     height="74"
-                    xlinkHref="data:image/png;base64,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"
+                    xlinkHref="data:image/png;base64,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"
                 />
             </defs>
         </svg>
@@ -64,17 +62,18 @@ function FacebookIcon() {
     );
 }
 
+function InstagramIcon() {
+    return (
+        <svg width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="15" cy="15" r="14.5" stroke="#fff" />
+            <rect x="8" y="8" width="14" height="14" rx="4" stroke="#fff" strokeWidth="1.5" />
+            <circle cx="15" cy="15" r="3.7" stroke="#fff" strokeWidth="1.5" />
+            <circle cx="19.2" cy="10.8" r="1.1" fill="#fff" />
+        </svg>
+    );
+}
+
 export default function Footer() {
-    const isAuthenticated = useIsAuthenticated();
-    const { inProgress } = useMsal();
-
-    // Footer is only shown on the pre-sign-in pages (sign-in, sign-up, reset-password).
-    // While MSAL is still settling an interaction (e.g. handling the sign-in
-    // redirect on first load), `isAuthenticated` is briefly false even though a
-    // sign-in just completed — rendering the footer here causes a 1s flash that
-    // vanishes once the active account is set. Hide it until MSAL is idle.
-    if (isAuthenticated || inProgress !== InteractionStatus.None) return null;
-
     return (
         <footer className={styles.footer}>
             <div className={styles.contact}>
@@ -151,6 +150,15 @@ export default function Footer() {
                             aria-label="Service Tasmania on Facebook"
                         >
                             <FacebookIcon />
+                        </a>
+                        <a
+                            href="https://www.instagram.com/servicetasmania"
+                            target="_blank"
+                            rel="noreferrer"
+                            className={styles.socialIcon}
+                            aria-label="Service Tasmania on Instagram"
+                        >
+                            <InstagramIcon />
                         </a>
                     </div>
 

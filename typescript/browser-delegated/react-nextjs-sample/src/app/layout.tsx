@@ -30,7 +30,7 @@ export default function RootLayout({
         <AuthProvider>
           <SsoBootstrap />
           <Navbar />
-          {children}
+          <div style={{ flex: 1 }}>{children}</div>
           <Footer />
         </AuthProvider>
       </body>

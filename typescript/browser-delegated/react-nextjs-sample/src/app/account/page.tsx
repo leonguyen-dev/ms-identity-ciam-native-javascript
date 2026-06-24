@@ -26,7 +26,6 @@ import { fetchPasskeys } from "@/services/passkey-service";
 const styles = {
     page: {
         backgroundColor: "#f5f5f5",
-        minHeight: "calc(100vh - 3.75rem)",
         fontFamily: "var(--font-nunito), 'Nunito', sans-serif",
         color: "#292929",
     },

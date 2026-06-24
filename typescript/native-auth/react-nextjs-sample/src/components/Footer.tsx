@@ -65,6 +65,17 @@ function FacebookIcon() {
     );
 }
 
+function InstagramIcon() {
+    return (
+        <svg width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="15" cy="15" r="14.5" stroke="#fff" />
+            <rect x="8" y="8" width="14" height="14" rx="4" stroke="#fff" strokeWidth="1.5" />
+            <circle cx="15" cy="15" r="3.7" stroke="#fff" strokeWidth="1.5" />
+            <circle cx="19.2" cy="10.8" r="1.1" fill="#fff" />
+        </svg>
+    );
+}
+
 export default function Footer() {
     const pathname = usePathname();
     const app = useAuthClient();
@@ -164,6 +175,15 @@ export default function Footer() {
                             aria-label="Service Tasmania on Facebook"
                         >
                             <FacebookIcon />
+                        </a>
+                        <a
+                            href="https://www.instagram.com/servicetasmania"
+                            target="_blank"
+                            rel="noreferrer"
+                            className={styles.socialIcon}
+                            aria-label="Service Tasmania on Instagram"
+                        >
+                            <InstagramIcon />
                         </a>
                     </div>
 
