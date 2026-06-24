@@ -35,7 +35,7 @@ These three decisions gate the build. Resolve them first.
 
 | # | Decision | Options | Recommendation |
 | --- | --- | --- | --- |
-| D1 | **Mobile app auth model** | Native auth (full in-app UI) **vs** browser-delegated (redirect) | Drives Feature B. Browser-delegated gives **web SSO for free** (shared `ciamlogin.com` session); native blocks app→system-browser SSO (B3). If app↔web SSO is a hard requirement, lean browser-delegated. |
+| D1 | **Mobile app auth model** | Native auth (full in-app UI) **vs** browser-delegated (redirect) | ✅ **Committed (2026-06-22): browser-delegated.** App↔web SSO ("sign into the app, open the website, no second sign-in") is the agreed goal (see [sso_id_token_hint_requirement.md](sso_id_token_hint_requirement.md)), so the app must share the system browser's `ciamlogin.com` cookie jar. This gives **web SSO for free** and collapses the B3 native→system-browser gap into the proven B1 path. (Originally a recommendation; now locked — see C1 in §4.1.) |
 | D2 | **User-flow topology for service providers** | One shared flow + app-layer T&C **vs** one user flow per service provider | One flow **per SP** (TFS flow carries the `termsAndConditionsTfs` attribute; generic flow doesn't), because T&C can't be shown conditionally mid-flow. |
 | D3 | **Custom URL domain** | Use `…ciamlogin.com` **vs** stand up a custom domain | Stand up the custom domain in Phase 0 — prerequisite for web↔web SSO **and** production passkeys. |
 
@@ -113,11 +113,29 @@ There is no attribute step at sign-in, so the "existing user accepts T&C for a n
 
 **`id_token_hint` is not available in External ID.** Decompose by scenario; each has a different answer.
 
-### Phase B0 — Confirm the app auth model (Decision D1)
+### 4.1 Alignment checklist — delivering the B2C `id_token_hint` *outcome* on External ID
+
+Decisions locked (2026-06-22): **the website (TFS / PlatesPlus–Power Pages) is moving to External ID**; **the goal is the user-facing outcome — "sign into the app, open the website, no second sign-in" — not the mint/consume mechanism**; and **D1 is committed to a browser-delegated mobile app** (C1, below). The literal six-step flow is therefore N/A by design (see [sso_id_token_hint_requirement.md](sso_id_token_hint_requirement.md)); these are the steps that turn the proven POC into the production outcome. C1 is now done — **C2 (custom domain) is the next gating item**. Do the rest in order.
+
+| # | Step | Why it's required for the outcome | Effort | Status |
+| --- | --- | --- | --- | --- |
+| C1 | **Commit Decision D1 = browser-delegated mobile app.** | Makes the system browser share the `ciamlogin.com` cookie jar → app→website skips login. Collapses the B3 gap into the proven B1 path; it's the prerequisite for the whole app→web leg. | S | ✅ **committed 2026-06-22** (D1 locked in §1) |
+| C2 | **Stand up the single custom URL domain (P0.1).** | Without it, only the `prompt=none` redirect works; the silent iframe stays blocked and Safari/iOS is unverified. Also on the critical path for production passkeys. | M | ⬜ |
+| C3 | **Grant admin consent for every relying party** (website, PlatesPlus/Power Pages, future SPs). | A never-consented app fails the silent request with `AADSTS65001 consent_required`, which has no UI to recover. One-time, mandatory per SP. | S | ✅ |
+| C4 | **Configure PlatesPlus / Power Pages as an OIDC relying party and run the B1.7 spike end-to-end, incl. Safari/iOS.** | The website leg named in the requirement; still the largest untested piece. | 🔬 | ⬜ (= B1.4 / B1.7) |
+| C5 | **Configure the "Stay signed in" persistent-browser-session control (B1.6).** | Keeps the shared session alive across app launches so SSO is useful in practice. | S | ⬜ (= B1.6) |
+
+**Explicitly not doing:** an app-layer session broker that mimics the mint/consume shape (plan B3.2 interim **(c)**) — it wouldn't yield an Entra token, and the agreed goal is the outcome, which C1–C5 deliver on supported mechanisms.
+
+**Alignment definition of done:** sign into the (browser-delegated) app → open the website / PlatesPlus in the system browser → **no second sign-in**, validated on Safari/iOS, on the custom domain, with admin consent granted for each relying party.
+
+### Phase B0 — Confirm the app auth model (Decision D1) ✅ **resolved 2026-06-22**
+
+> **Resolved (2026-06-22):** D1 committed to **browser-delegated** (C1 in §4.1; D1 row in §1). App→system-browser SSO is therefore a **free win** via the shared `ciamlogin.com` cookie jar — B3 collapses into the proven B1 path — rather than a platform gap. The native-auth sample remains in the repo for reference, but the production mobile app is browser-delegated.
 
 | Step | Task | Effort |
 | --- | --- | --- |
-| B0.1 | Confirm native vs browser-delegated for the mobile app, because it determines whether B3 (app→system-browser SSO) is a free win or a platform gap. | S |
+| B0.1 | Confirm native vs browser-delegated for the mobile app, because it determines whether B3 (app→system-browser SSO) is a free win or a platform gap. — ✅ browser-delegated (see above). | S |
 
 ### Phase B1 — Web ↔ Web SSO (the supported win — do this first) ✅ **proven (POC)**
 

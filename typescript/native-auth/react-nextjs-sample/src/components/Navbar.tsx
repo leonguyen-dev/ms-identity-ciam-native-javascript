@@ -2,13 +2,31 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useAuthClient } from "@/auth/AuthClientProvider";
 import styles from "./Navbar.module.css";
 
 export default function Navbar() {
     const router = useRouter();
+    const pathname = usePathname();
     const app = useAuthClient();
+    const [isSignedIn, setIsSignedIn] = useState(false);
+
+    useEffect(() => {
+        if (!app) return;
+        const checkAccount = () => setIsSignedIn(!!app.getCurrentAccount().data);
+
+        checkAccount();
+        // Sign-in completes on the home page without a navigation, so poll the
+        // MSAL cache to pick up the change promptly. Also re-check on focus.
+        const interval = setInterval(checkAccount, 800);
+        window.addEventListener("focus", checkAccount);
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener("focus", checkAccount);
+        };
+    }, [app, pathname]);
 
     const handleLogout = async () => {
         if (!app) return;
@@ -32,7 +50,7 @@ export default function Navbar() {
         <nav className={styles.navbar}>
             <Link href="/" className={styles.logo} aria-label="Service Tasmania home">
                 <Image
-                    src="/logos/tasmania-govt-black.svg"
+                    src="/logos/tasmania-govt-green.svg"
                     alt="Tasmanian Government"
                     width={54}
                     height={50}
@@ -41,7 +59,7 @@ export default function Navbar() {
                 />
                 <span className={styles.logoDivider} aria-hidden="true" />
                 <Image
-                    src="/logos/service-tasmania-black.svg"
+                    src="/logos/service-tasmania-green.svg"
                     alt="Service Tasmania"
                     width={118}
                     height={48}
@@ -50,21 +68,30 @@ export default function Navbar() {
                 />
             </Link>
             <div className={styles.links}>
-                <Link href="/" className={styles.link}>
-                    Sign In
-                </Link>
-                <Link href="/sign-up" className={styles.link}>
-                    Sign Up
-                </Link>
-                <Link href="/reset-password" className={styles.link}>
-                    Reset Password
-                </Link>
-                <Link href="/webview" className={styles.link}>
-                    Webview SSO
-                </Link>
-                <button onClick={handleLogout} className={styles.link} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'inherit', textDecoration: 'underline' }}>
-                    Sign Out
-                </button>
+                {!isSignedIn && (
+                    <div className={styles.help}>
+                        <span className={styles.helpText}>Need help?</span>
+                        <a
+                            href="https://portal.my.service.tas.gov.au/contactus/"
+                            className={styles.contactLink}
+                        >
+                            Contact us
+                        </a>
+                    </div>
+                )}
+                {isSignedIn && (
+                    <>
+                        <Link href="/webview" className={styles.link}>
+                            Webview SSO
+                        </Link>
+                        <Link href="/account" className={styles.link}>
+                            My Account
+                        </Link>
+                        <button onClick={handleLogout} className={styles.link} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'inherit', textDecoration: 'underline' }}>
+                            Sign Out
+                        </button>
+                    </>
+                )}
             </div>
         </nav>
     );

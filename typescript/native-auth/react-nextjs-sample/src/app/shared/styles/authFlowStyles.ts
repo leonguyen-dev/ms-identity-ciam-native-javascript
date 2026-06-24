@@ -1,7 +1,6 @@
 export const authFlowStyles = {
     pageWrapper: {
         backgroundColor: "#f5f5f5",
-        minHeight: "100vh",
         fontFamily: "var(--font-nunito), 'Nunito', sans-serif",
         color: "#292929",
     },
