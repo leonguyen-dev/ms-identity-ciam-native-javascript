@@ -108,18 +108,6 @@ const styles = {
         fontWeight: 800,
         fontFamily: "var(--font-nunito), 'Nunito', sans-serif",
     },
-    toggleButton: {
-        padding: "0.5rem 1.25rem",
-        backgroundColor: "#ffffff",
-        color: "#267151",
-        border: "0.0625rem solid #267151",
-        borderRadius: "0",
-        cursor: "pointer",
-        fontSize: "0.875rem",
-        fontWeight: 800,
-        fontFamily: "var(--font-nunito), 'Nunito', sans-serif",
-        whiteSpace: "nowrap" as const,
-    },
 } as const;
 
 type Banner = { kind: "info" | "success" | "error"; text: string } | null;
@@ -405,7 +393,7 @@ function AccountManager() {
                 </div>
                 <button
                     type="button"
-                    style={styles.toggleButton}
+                    className="st-toggle-button"
                     onClick={() => toggle(key)}
                     disabled={busy}
                 >
@@ -554,7 +542,7 @@ function AccountManager() {
                                                     </button>
                                                     <button
                                                         type="button"
-                                                        style={styles.toggleButton}
+                                                        className="st-toggle-button"
                                                         disabled={busy}
                                                         onClick={sendOtp}
                                                     >

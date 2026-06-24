@@ -49,3 +49,30 @@ a {
   font-weight: 800;
   text-decoration: underline;
 }
+
+.st-toggle-button {
+  padding: 0.5rem 1.25rem;
+  background-color: #ffffff;
+  color: var(--st-primary);
+  border: 0.0625rem solid var(--st-primary);
+  border-radius: 0;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 800;
+  font-family: var(--font-nunito), "Nunito", sans-serif;
+  white-space: nowrap;
+  appearance: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.st-toggle-button:hover,
+.st-toggle-button:focus-visible {
+  background-color: var(--st-primary);
+  color: #ffffff;
+  outline: none;
+}
+
+.st-toggle-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

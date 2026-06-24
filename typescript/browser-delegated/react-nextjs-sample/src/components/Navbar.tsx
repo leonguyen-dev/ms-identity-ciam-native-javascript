@@ -94,7 +94,7 @@ export default function Navbar() {
                                 Impersonation
                             </Link>
                         )}
-                        <button className={styles.link} onClick={handleSignOut} disabled={busy}>
+                        <button className={styles.signOutButton} onClick={handleSignOut} disabled={busy}>
                             Sign Out
                         </button>
                     </>

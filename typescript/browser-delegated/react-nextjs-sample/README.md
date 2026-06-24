@@ -215,7 +215,7 @@ $env:NEXT_PUBLIC_PEER_APP_LABEL = "App B"
 npm run dev:passkey
 
 # Terminal 3 — App B (second client id) on app-b.<tenant>.ciamlogin.com:3002
-$env:NEXT_PUBLIC_CLIENT_ID = "<APP_B_CLIENT_ID>"
+$env:NEXT_PUBLIC_CLIENT_ID = "189164f4-dd78-4b6c-a44e-0cfa69a8d5e7"
 $env:NEXT_PUBLIC_APP_LABEL = "App B"
 $env:NEXT_DIST_DIR = ".next-appB"   # separate build dir; two dev servers can't share .next/dev
 npm run dev:appB:https
