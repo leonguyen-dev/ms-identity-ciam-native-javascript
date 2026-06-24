@@ -198,6 +198,7 @@ export default function Footer() {
                             height={50}
                             className={styles.brandEmblem}
                         />
+                        <span className={styles.brandDivider} aria-hidden="true" />
                         <Image
                             src="/logos/service-tasmania-black.svg"
                             alt="Service Tasmania"

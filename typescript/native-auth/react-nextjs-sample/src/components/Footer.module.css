@@ -34,6 +34,7 @@
     gap: 1rem;
     background-color: rgb(79, 79, 79);
     padding: 1rem 1.5rem;
+    box-shadow: 0px 0.25rem 2.5rem 0px rgba(0, 0, 0, 0.1490196078);
 }
 
 .cardIcon {
@@ -195,6 +196,14 @@
     width: auto;
     /* Render the black source asset white for the dark footer */
     filter: brightness(0) invert(1);
+}
+
+.brandDivider {
+    flex: 0 0 auto;
+    width: 1px;
+    height: 3rem;
+    background-color: #ffffff;
+    margin: 0 0.25rem;
 }
 
 .brandWordmark {
