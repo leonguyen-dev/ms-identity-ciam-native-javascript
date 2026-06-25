@@ -123,7 +123,7 @@ const styles = {
         backgroundColor: "#000",
     },
     deviceBar: { color: "#fff", fontSize: "0.8125rem", textAlign: "center" as const, padding: "0.5rem", fontWeight: 700 },
-    iframe: { display: "block", width: "100%", height: "24rem", border: "none", backgroundColor: "#fff" },
+    iframe: { display: "block", width: "100%", height: "40rem", border: "none", backgroundColor: "#fff" },
     detailGrid: { display: "grid", gridTemplateColumns: "10rem 1fr", gap: "0.4rem 1rem", margin: "1.25rem 0", fontSize: "0.9375rem" },
     detailKey: { fontWeight: 700, color: "#267151" },
     table: { width: "100%", borderCollapse: "collapse" as const, fontSize: "0.875rem" },

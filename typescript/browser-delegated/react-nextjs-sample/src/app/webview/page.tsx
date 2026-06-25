@@ -67,7 +67,7 @@ const styles = {
     iframe: {
         display: "block",
         width: "100%",
-        height: "26rem",
+        height: "40rem",
         border: "none",
         backgroundColor: "#fff",
     },
