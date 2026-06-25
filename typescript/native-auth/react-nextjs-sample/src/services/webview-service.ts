@@ -1,4 +1,4 @@
-import { webviewProxyBase } from "@/config/auth-config";
+import { webviewSessionUrl } from "@/config/auth-config";
 
 /**
  * Client for the webview SSO routes on the local proxy (cors.js), Feature B / B2
@@ -27,10 +27,15 @@ export interface WebviewSessionUser {
 export async function establishWebviewSession(bearerToken: string): Promise<WebviewSessionUser> {
     let response: Response;
     try {
-        response = await fetch(`${webviewProxyBase}/api/webview/session`, {
+        response = await fetch(webviewSessionUrl(), {
             method: "POST",
             credentials: "include",
-            headers: { Authorization: `Bearer ${bearerToken}` },
+            // Sent as a custom header, NOT Authorization: Azure Static Web Apps
+            // reserves Authorization for its own platform auth and replaces it
+            // before the request reaches the managed function, so a bearer placed
+            // there is lost. A custom header passes through untouched. cors.js
+            // accepts the same header locally.
+            headers: { "X-Webview-Token": bearerToken },
         });
     } catch {
         throw new Error(

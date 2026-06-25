@@ -205,9 +205,14 @@ async function getOidcMetadata(forceKeyRefresh = false) {
 
 /** Validate the injected Bearer token against the tenant JWKS; return its claims. */
 async function verifyBearerToken(req) {
+    // Prefer the custom X-Webview-Token header (the client sends the token there
+    // because Azure Static Web Apps clobbers Authorization in production); fall
+    // back to Authorization: Bearer for any direct callers.
     const authHeader = req.headers.authorization ?? "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-    if (!token) throw new HttpError(401, "Missing Bearer token.");
+    const token =
+        req.headers["x-webview-token"] ||
+        (authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null);
+    if (!token) throw new HttpError(401, "Missing token.");
 
     const parts = token.split(".");
     if (parts.length !== 3) throw new HttpError(401, "Malformed token.");
@@ -298,14 +303,14 @@ function webviewContentHtml(session, { profile = false } = {}) {
              from the home page with <strong>no token re-injection</strong> — the request
              carried only the <code>HttpOnly</code> session cookie set on the first load.
              That is the "persist the session across navigation" guarantee.</p>
-           <p><a href="/webview">&larr; Back to webview home</a></p>`
+           <p><a href="/api/webview/content">&larr; Back to webview home</a></p>`
         : `<p>You are signed in <strong>inside the embedded web content</strong> as
              <strong>${email}</strong> — with <strong>no second prompt</strong>.</p>
            <p>The native app shell acquired a token, injected it as a Bearer header on the
              first request, and this backend exchanged it for an <code>HttpOnly</code>
              session cookie. Follow the link below to prove the session persists across
              navigation without re-injecting the token:</p>
-           <p><a href="/webview/profile">Go to the profile page &rarr;</a></p>`;
+           <p><a href="/api/webview/content/profile">Go to the profile page &rarr;</a></p>`;
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -371,7 +376,16 @@ async function handleWebview(req, reqUrl, res, corsHeaders) {
         return;
     }
 
-    if (req.method === "GET" && (reqUrl.pathname === "/webview" || reqUrl.pathname === "/webview/profile")) {
+    // Iframe content. Served under /api/webview/content (matching the SWA managed
+    // function, where /api/* is the only path the function owns); /webview and
+    // /webview/profile stay as aliases so older links keep working.
+    const contentPaths = [
+        `${proxyConfig.localApiPath}/webview/content`,
+        `${proxyConfig.localApiPath}/webview/content/profile`,
+        "/webview",
+        "/webview/profile",
+    ];
+    if (req.method === "GET" && contentPaths.includes(reqUrl.pathname)) {
         const session = readWebviewCookie(req);
         if (!session) {
             res.writeHead(401, { "Content-Type": "text/html; charset=utf-8" });
@@ -379,7 +393,7 @@ async function handleWebview(req, reqUrl, res, corsHeaders) {
             return;
         }
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(webviewContentHtml(session, { profile: reqUrl.pathname === "/webview/profile" }));
+        res.end(webviewContentHtml(session, { profile: reqUrl.pathname.endsWith("/profile") }));
         return;
     }
 
@@ -1039,7 +1053,7 @@ http.createServer((req, res) => {
         "Access-Control-Allow-Origin": req.headers.origin || "*",
         Vary: "Origin",
         "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, " + extraHeaders.join(", "),
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Webview-Token, " + extraHeaders.join(", "),
         "Access-Control-Allow-Credentials": "true",
         "Access-Control-Max-Age": "86400", // 24 hours
     };
@@ -1053,9 +1067,11 @@ http.createServer((req, res) => {
 
     // Webview SSO (Feature B / B2). Dispatched before the CIAM passthrough below:
     // /api/webview/session runs its own token verification (it must not be proxied
-    // to CIAM), and the /webview content pages don't live under /api at all.
+    // to CIAM), and /api/webview/content serves the iframe pages (with /webview
+    // aliases kept for back-compat).
     if (
         reqUrl.pathname === `${proxyConfig.localApiPath}/webview/session` ||
+        reqUrl.pathname.startsWith(`${proxyConfig.localApiPath}/webview/content`) ||
         reqUrl.pathname === "/webview" ||
         reqUrl.pathname === "/webview/profile"
     ) {

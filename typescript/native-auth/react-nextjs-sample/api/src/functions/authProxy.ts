@@ -1,5 +1,6 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import { validateSignUpAttributes, AttributeInput } from "../attributeValidation";
+import { handleWebviewRoute } from "../webview";
 
 /**
  * Native-auth CORS proxy for Azure Static Web Apps.
@@ -42,6 +43,15 @@ export async function authProxy(request: HttpRequest, context: InvocationContext
             return { status: 400, jsonBody: { valid: false, errors: {}, message: "Invalid request body." } };
         }
         return { status: 200, jsonBody: validateSignUpAttributes(body as AttributeInput) };
+    }
+
+    // Webview SSO (Feature B / B2). Served here, not proxied to CIAM: the session
+    // endpoint validates the injected Bearer token and sets an HttpOnly cookie, and
+    // the content pages are an iframe navigation gated on that cookie. Returns null
+    // for non-webview paths so the CIAM passthrough below still runs.
+    const webviewResponse = await handleWebviewRoute(request, context, path);
+    if (webviewResponse) {
+        return webviewResponse;
     }
 
     const query = request.query.toString();

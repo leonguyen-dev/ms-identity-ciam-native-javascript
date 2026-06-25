@@ -170,8 +170,7 @@ export default function WebviewPage() {
 
                     {!available ? (
                         <div style={styles.status("error")}>
-                            The webview demo needs the local proxy (<code>npm run cors</code>) and runs on{" "}
-                            <code>localhost</code>. It is disabled on this host.
+                            Preparing the webview demo…
                         </div>
                     ) : signedIn === false ? (
                         <>
