@@ -205,12 +205,14 @@ async function getOidcMetadata(forceKeyRefresh = false) {
 
 /** Validate the injected Bearer token against the tenant JWKS; return its claims. */
 async function verifyBearerToken(req) {
-    // Prefer the custom X-Webview-Token header (the client sends the token there
-    // because Azure Static Web Apps clobbers Authorization in production); fall
-    // back to Authorization: Bearer for any direct callers.
+    // Prefer the custom headers the clients use (the token rides a custom header
+    // because Azure Static Web Apps clobbers Authorization in production):
+    // X-Webview-Token for the webview routes, X-Account-Token for the account
+    // routes; fall back to Authorization: Bearer for any direct callers.
     const authHeader = req.headers.authorization ?? "";
     const token =
         req.headers["x-webview-token"] ||
+        req.headers["x-account-token"] ||
         (authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null);
     if (!token) throw new HttpError(401, "Missing token.");
 
@@ -1053,7 +1055,7 @@ http.createServer((req, res) => {
         "Access-Control-Allow-Origin": req.headers.origin || "*",
         Vary: "Origin",
         "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Webview-Token, " + extraHeaders.join(", "),
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Webview-Token, X-Account-Token, " + extraHeaders.join(", "),
         "Access-Control-Allow-Credentials": "true",
         "Access-Control-Max-Age": "86400", // 24 hours
     };

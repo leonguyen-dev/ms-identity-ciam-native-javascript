@@ -1,6 +1,7 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import { validateSignUpAttributes, AttributeInput } from "../attributeValidation";
 import { handleWebviewRoute } from "../webview";
+import { handleAccountRoute } from "../account";
 
 /**
  * Native-auth CORS proxy for Azure Static Web Apps.
@@ -52,6 +53,14 @@ export async function authProxy(request: HttpRequest, context: InvocationContext
     const webviewResponse = await handleWebviewRoute(request, context, path);
     if (webviewResponse) {
         return webviewResponse;
+    }
+
+    // Account self-management (Graph app-only). Served here, not proxied to CIAM: the
+    // routes verify the caller's X-Account-Token and call Microsoft Graph with an
+    // app-only token. Returns null for non-account paths so the passthrough runs.
+    const accountResponse = await handleAccountRoute(request, context, path);
+    if (accountResponse) {
+        return accountResponse;
     }
 
     const query = request.query.toString();

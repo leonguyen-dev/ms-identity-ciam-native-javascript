@@ -53,7 +53,12 @@ async function callAccountApi(
             ...init,
             headers: {
                 "Content-Type": "application/json",
-                Authorization: `Bearer ${bearerToken}`,
+                // The CIAM token rides a custom header, NOT Authorization: on Azure
+                // Static Web Apps the platform overwrites Authorization with its own
+                // token before the request reaches the managed function, so a bearer
+                // placed there never survives. The dev proxy (cors.js) reads this
+                // header too. (See reference_swa_authorization_header_clobber.)
+                "X-Account-Token": bearerToken,
                 ...init.headers,
             },
         });
