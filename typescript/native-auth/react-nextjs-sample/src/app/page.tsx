@@ -317,7 +317,8 @@ const styles = {
 
 // The Service Tasmania portal shows a single generic message for any credential
 // failure (wrong email or wrong password) so it never reveals which one was wrong.
-const SIGN_IN_FAILED_MESSAGE = "We can't seem to find your account.";
+const SIGN_IN_FAILED_MESSAGE =
+    "We can't seem to find your account or the entered password is incorrect.";
 
 function MailIcon() {
     return (
@@ -547,7 +548,7 @@ export default function Home() {
 
             if (result.isFailed()) {
                 if (result.error?.isInvalidPassword()) {
-                    setError("Incorrect password");
+                    setError(SIGN_IN_FAILED_MESSAGE);
                 } else {
                     handleAuthFailure(result.error, "An error occurred while verifying the password");
                 }
