@@ -324,7 +324,12 @@ export default function SignUpPage() {
                 const required = nextState.getRequiredAttributes();
                 const dobAttr = required.find((a) => a.name.endsWith("dateOfBirth"));
                 if (dobAttr) {
-                    attributes[dobAttr.name] = dateOfBirth;
+                    // <input type="date"> yields ISO YYYY-MM-DD; Entra's dateOfBirth
+                    // attribute expects DD/MM/YYYY, so convert before submitting.
+                    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOfBirth);
+                    attributes[dobAttr.name] = iso
+                        ? `${iso[3]}/${iso[2]}/${iso[1]}`
+                        : dateOfBirth;
                 }
 
                 const termsAttr = required.find((a) => a.name.endsWith("termsAndConditions"));
