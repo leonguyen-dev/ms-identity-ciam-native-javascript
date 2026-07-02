@@ -9,7 +9,8 @@ import { accountApiBase } from "@/config/auth-config";
  *   summary       GET  /api/account                       read current email + mobile
  *   sendSignInOtp POST /api/account/signin-name/send-otp  email a code to a new sign-in email
  *   signInName    POST /api/account/signin-name           change sign-in email (needs that code)
- *   phone         POST /api/account/phone                 change mobile number
+ *   sendPhoneOtp  POST /api/account/phone/send-otp        SMS a code to a new mobile number
+ *   phone         POST /api/account/phone                 change mobile number (needs that code)
  *
  * Password changes are NOT here: Microsoft Graph has no app-only (or external-
  * tenant self-service) path to set a user's own password, so the account page
@@ -106,10 +107,31 @@ export async function changeSignInName(
     return body.message ?? "Sign-in email changed.";
 }
 
-export async function changePhone(bearerToken: string, phoneNumber: string): Promise<string> {
-    const body = (await callAccountApi("/account/phone", bearerToken, {
+/**
+ * SMS a verification code to a prospective new mobile number. Proves the user
+ * controls the handset before changePhone() will accept it. Only needs a valid
+ * token (not a fresh-MFA one). Returns the proxy's confirmation message.
+ */
+export async function sendPhoneOtp(bearerToken: string, phoneNumber: string): Promise<string> {
+    const body = (await callAccountApi("/account/phone/send-otp", bearerToken, {
         method: "POST",
         body: JSON.stringify({ phoneNumber }),
+    })) as { message?: string };
+    return body.message ?? "Verification code sent.";
+}
+
+/**
+ * Change the mobile MFA number. Requires the `otp` texted by sendPhoneOtp() and
+ * a fresh-MFA `bearerToken`. Returns the human-readable confirmation message.
+ */
+export async function changePhone(
+    bearerToken: string,
+    phoneNumber: string,
+    otp: string
+): Promise<string> {
+    const body = (await callAccountApi("/account/phone", bearerToken, {
+        method: "POST",
+        body: JSON.stringify({ phoneNumber, otp }),
     })) as { message?: string };
     return body.message ?? "Mobile number changed.";
 }

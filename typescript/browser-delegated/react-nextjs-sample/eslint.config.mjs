@@ -14,6 +14,7 @@ const eslintConfig = [
     // Build output and dependencies — never lint generated/minified code.
     ignores: [
       ".next/**",
+      ".next-*/**",
       "out/**",
       "node_modules/**",
     ],

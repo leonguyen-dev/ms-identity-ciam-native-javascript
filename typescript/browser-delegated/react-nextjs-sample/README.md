@@ -14,7 +14,7 @@ sample, and it means **there is no CORS proxy** — the browser redirects straig
 
 ## How it works
 
-```
+```text
 React SPA  ──loginRedirect()──▶  Entra-hosted user flow (ServiceTas_SignUpSignIn)
                                    │  sign in / sign up / forgot password
                                    │  email OTP  (OnOtpSend → otp-email-function)
@@ -56,11 +56,13 @@ React SPA  ◀──redirect back──  tokens in sessionStorage → claims vie
    `http://localhost:3000/`).
 2. Put the SPA app's client id in `src/config/auth-config.ts`.
 3. Install and start:
+
    ```bash
    npm install
    npm run dev
    ```
-4. Open http://localhost:3000 and select **Log in** or **Create an account**. You're
+
+4. Open <http://localhost:3000> and select **Log in** or **Create an account**. You're
    redirected to the hosted Service Tasmania pages and returned signed in; the home
    page then shows the decoded ID-token claims (including the custom `phone_number`).
 
@@ -346,18 +348,27 @@ synced. The literal `userPrincipalName` is intentionally left as the tenant's
 user sees in the token comes from the identity / `mail`, not the UPN. Users must
 **sign out and back in** to get a token reflecting the new email.
 
-Before any of that, the user must **verify the new address**. Graph has no app-only
-API to send + check a code to an arbitrary email, so the proxy mints its own: the
-page first calls `…/signin-name/send-otp`, which emails a 6-digit code to the new
-address via Azure Communication Services (the same transport the native-auth
-[`otp-email-function`](../../azure-function-apps/otp-email-function) uses) and stores a
-hash keyed by the caller's `oid`. The change endpoint then requires that code back,
-so a user can only point their sign-in email at a mailbox they actually control.
-Sending the code needs only a valid token; the change itself still needs fresh MFA
-— the code proves *mailbox control*, the `ngcmfa` challenge proves *it's really
-you*.
+Before any of that, the user must **verify the new contact**. Graph has no app-only
+API to send + check a code to an arbitrary email or number, so the proxy mints its
+own:
+
+- **New sign-in email** — the page first calls `…/signin-name/send-otp`, which
+  emails a 6-digit code to the new address via Azure Communication Services (the
+   same transport the [`otp-email-function`](../../azure-function-apps/otp-email-function)
+  uses).
+- **New phone number** — the page first calls `…/phone/send-otp`, which texts a
+  6-digit code to the new number via **ACS SMS** (an alphanumeric sender ID, e.g.
+  `myServiceTasPOC` — no number to provision, one-way only, fine for OTP).
+
+Either way the proxy stores a hash keyed by the caller's `oid` and bound to that
+exact email/number, and the matching change endpoint requires the code back — so a
+user can only point their sign-in email / MFA number at a mailbox or handset they
+actually control. Sending the code needs only a valid token; the change itself
+still needs fresh MFA — the code proves *contact control*, the `ngcmfa` challenge
+proves *it's really you*.
 
 > **`identities` gotchas (two of them):**
+>
 > 1. Updating the `identities[]` property requires **`User.ManageIdentities.All`**
 >    specifically — `User.ReadWrite.All` is *not* enough (PATCH returns **403**).
 > 2. App-only `GET …?$select=identities` returns an **empty `identities[]`** for
@@ -385,18 +396,25 @@ challenge and redirects for MFA if it isn't recent), so a user can only ever cha
    and grant admin consent. Add a **client secret** (this turns the SPA's app
    registration into a confidential client for the proxy only — the browser never
    uses it).
-2. Put the secret in a gitignored `.env.local` in this folder. The two
-   `COMMUNICATION_SERVICES_*` values are the same ones the `otp-email-function`
-   uses (an Azure Communication Services email resource with a verified sender
-   domain) and are required for the sign-in-email verification code to send:
+2. Put the secret in a gitignored `.env.local` in this folder. The
+   `COMMUNICATION_SERVICES_CONNECTION_STRING` / `…_SENDER_ADDRESS` values are the
+   same ones the `otp-email-function` uses (an Azure Communication Services email
+   resource with a verified sender domain) and are required for the sign-in-email
+   verification code to send. `COMMUNICATION_SERVICES_SMS_SENDER` is the alphanumeric
+   sender ID on the same ACS resource and is required for the phone-number
+   verification code to send (register the sender ID in the ACS portal first):
+
    ```bash
    ACCOUNT_CLIENT_SECRET=<the client secret value>
    COMMUNICATION_SERVICES_CONNECTION_STRING=<ACS connection string>
    COMMUNICATION_SERVICES_SENDER_ADDRESS=DoNotReply@<your-verified-domain>
+   COMMUNICATION_SERVICES_SMS_SENDER=<alphanumeric sender ID, e.g. myServiceTasPOC>
    # optional, defaults to "myServiceTas"
    MAIL_SENDER_DISPLAY_NAME=myServiceTas
    ```
+
 3. In a second terminal, start the proxy alongside `npm run dev`:
+
    ```bash
    npm run proxy
    ```
@@ -463,7 +481,7 @@ App B gets its own `.next-appB` (gitignored).
 (Different ports ⇒ different origins ⇒ separate MSAL `sessionStorage` caches, so a
 silent sign-in on App B proves *real* cross-app SSO, not a shared cache.)
 
-### Try it
+### Try it (B1)
 
 1. Open <http://localhost:3000> (App A) and **Log in**.
 2. On the signed-in view, click **Open App B (SSO)**.
@@ -500,7 +518,7 @@ embedded `<iframe>` is the webview. Because a browser can't set a header on an
 `<iframe>` navigation (the native SDK can), the shell does the one-time bearer
 injection with a credentialed `fetch`:
 
-```
+```text
 /webview page (native app shell)          local-proxy.mjs (web resource backend)
   acquireTokenSilent() ─────────────────▶
   POST /api/webview/session
@@ -531,7 +549,7 @@ cross-site embed would need partitioned cookies (CHIPS).
 > B2.3. Don't ship `local-proxy.mjs`: host the same `/api/webview/session` +
 > `/webview` logic in a real backend (e.g. the SWA's managed Functions).
 
-### Run it
+### Run it (B2)
 
 ```bash
 npm run proxy   # terminal 1 — web resource backend on http://localhost:3001
@@ -593,7 +611,7 @@ interactive `loginRedirect` seeded with the hint.
 > one tap to finish — is the real interim experience; what's elided is a silent
 > success that a genuine native→system-browser handoff never gets.
 
-### Try it
+### Try it (B3)
 
 Use the **same two-instance setup as B1** (App A on :3000, App B on :3002 — see
 "Run two instances locally" above), so the handoff target is a *separate* app
@@ -606,11 +624,13 @@ with its own MSAL cache:
 
 1. In App A's terminal, point it at App B as the peer (App A already does this in
    the B1 setup):
+
    ```powershell
    $env:NEXT_PUBLIC_PEER_APP_URL = "http://localhost:3002"
    $env:NEXT_PUBLIC_PEER_APP_LABEL = "App B"
    npm run dev
    ```
+
 2. Sign in to App A, then open **System-browser SSO** in the navbar (or go to
    <http://localhost:3000/handoff>).
 3. Click **Open App B in the system browser**. App B opens in a new tab, reads
@@ -647,7 +667,7 @@ elevates the admin's own rights), least privilege (read-only), bounded 15-minute
 **revocation** (an active-session registry, not just cookie expiry), and an append-only **audit log**
 with a required justification.
 
-```
+```text
 /impersonate (admin portal)             local-proxy.mjs (portal backend)
   POST /api/impersonation/start
       Authorization: Bearer <admin token>
@@ -664,7 +684,7 @@ with a required justification.
 > the audit immutably (Azure Monitor / SIEM), and put both web properties under one custom URL domain.
 > The remaining open items before a production commit are in the design doc (§7).
 
-### Run it
+### Run it (B4)
 
 ```bash
 npm run proxy   # terminal 1 — portal backend on http://localhost:3001
