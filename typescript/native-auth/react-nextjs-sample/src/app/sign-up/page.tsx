@@ -10,8 +10,6 @@ import { EmailStep } from "../shared/components/EmailStep";
 import { VerificationCodeStep } from "../shared/components/VerificationCodeStep";
 import {
     AuthFlowStateBase,
-    CustomAuthAccountData,
-    SignInCompletedState,
     SignUpAttributesRequiredState,
     SignUpCodeRequiredState,
     SignUpCompletedState,
@@ -69,7 +67,6 @@ export default function SignUpPage() {
     const [signUpState, setSignUpState] = useState<AuthFlowStateBase | null>(null);
     const [loadingAccountStatus, setLoadingAccountStatus] = useState(true);
     const [isSignedIn, setSignInState] = useState(false);
-    const [data, setData] = useState<CustomAuthAccountData | undefined>(undefined);
 
     const [phoneAuthMethod, setPhoneAuthMethod] = useState<AuthenticationMethod | undefined>(undefined);
 
@@ -396,9 +393,9 @@ export default function SignUpPage() {
         }
 
         if (result.isCompleted()) {
-            setData(result.data);
-            setSignUpState(result.state);
-            setSignInState(true);
+            // Account created and signed in. Send the user to the homepage, which
+            // reads the account from the MSAL cache and renders the ID token claims.
+            router.push("/");
         }
     };
 
@@ -439,9 +436,7 @@ export default function SignUpPage() {
             }
 
             if (result.isCompleted()) {
-                setData(result.data);
-                setSignUpState(result.state);
-                setSignInState(true);
+                router.push("/");
             }
 
             if (result.isVerificationRequired && result.isVerificationRequired()) {
@@ -508,9 +503,7 @@ export default function SignUpPage() {
             }
 
             if (result.isCompleted()) {
-                setData(result.data);
-                setSignUpState(result.state);
-                setSignInState(true);
+                router.push("/");
             }
         } catch (err) {
             handleSubmitException(err, "An error occurred while verifying the SMS code.");
@@ -585,9 +578,7 @@ export default function SignUpPage() {
                 }
 
                 if (result.isCompleted()) {
-                    setData(result.data);
-                    setSignInState(true);
-                    setSignUpState(result.state);
+                    router.push("/");
                 }
             } catch (err) {
                 handleSubmitException(err, "An error occurred while verifying the challenge response");
@@ -664,14 +655,6 @@ export default function SignUpPage() {
                     loading={loading}
                     styles={styles}
                 />
-            );
-        }
-
-        if (signUpState instanceof SignInCompletedState) {
-            return (
-                <div style={styles.signed_in_msg}>
-                    Sign up completed! Automatically signed in as {data?.getAccount().username}
-                </div>
             );
         }
 
