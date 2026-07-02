@@ -74,6 +74,17 @@ App settings to set on the Function Apps:
 - **SMS add-on**: SMS MFA requires the external tenant **linked to a paid Azure
   subscription**. Entra ID → External Identities → pricing/linked subscription.
   Check AU **opt-in regions** for SMS (`how-to-region-code-opt-in`).
+- **SMS region allowlist (AU/NZ only)** — *applied 2026-07-02, listener
+  `6294d224-78a8-402a-ab96-8330e442a667`*: run `./configure-sms-region-codes.ps1`
+  (Graph `onPhoneMethodLoadStart` event policy, preview, **beta endpoint only**)
+  to restrict the SMS MFA country picker to **+61 Australia** and **+64 New
+  Zealand** for the SPA app. The policy has no allowlist or default-country
+  property, so the script puts every other ITU calling code (204 of them) in
+  `excludeRegions`; with only two entries left, the picker pre-selects by
+  browser locale, falling back to Australia (+61). Needs the *Authentication
+  Extensibility Administrator* (or *Application Administrator*) role. Note: the
+  native-auth sample shares this client ID, so its SMS challenges are restricted
+  too. Undo = `DELETE /identity/authenticationEventListeners/{id}`.
 - **Authentication methods**: enable **SMS** and **Email OTP**; target All users.
 - **CA — Require MFA**: new policy targeting the POC app(s) + all users → Grant:
   *Require multifactor authentication*. (= B2C Step 8/11.)
