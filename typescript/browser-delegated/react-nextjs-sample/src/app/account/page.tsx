@@ -664,7 +664,7 @@ function AccountManager() {
                                                     </button>
                                                     <button
                                                         type="button"
-                                                        style={styles.toggleButton}
+                                                        className="st-toggle-button"
                                                         disabled={busy}
                                                         onClick={sendPhoneCode}
                                                     >

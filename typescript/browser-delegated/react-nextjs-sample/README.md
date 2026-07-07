@@ -6,24 +6,45 @@ approach with MSAL. It is the External ID counterpart to the Azure AD B2C custom
 policy `B2C_1A_ServiceTas_SignUp_SignIn`.
 
 This sample is a **sibling** of the native-auth sample (`../../native-auth/react-nextjs-sample`).
-The key difference: here the sign-up/sign-in/reset UI lives on **Entra-hosted
-user-flow pages**, and MSAL only starts the redirect and reads the resulting
-tokens. That is *closer to B2C* (which also hosted its pages) than the native-auth
-sample, and it means **there is no CORS proxy** — the browser redirects straight to
-`ciamlogin.com`.
+The key difference: here the sign-in/reset UI lives on **Entra-hosted user-flow
+pages**, and MSAL only starts the redirect and reads the resulting tokens. That is
+*closer to B2C* (which also hosted its pages) than the native-auth sample.
+
+The one exception is **sign-up**: `/sign-up` renders the native-auth sign-up flow
+in React (ported from the native-auth sample), then hands the brand-new account
+off to a hosted sign-in redirect seeded with `login_hint`. Native auth can't mint
+the Entra web session cookie, so that hosted sign-in is what gives the app its
+normal browser SSO session — and it's also where the user registers their MFA
+phone (the native sample's in-app "3/3" mobile step deliberately isn't ported;
+doing both would mean two SMS codes back-to-back). Because the native-auth REST
+endpoints send no CORS headers, sign-up needs `local-proxy.mjs` running (it
+forwards `/api/signup/*` and `/api/oauth2/*` to `ciamlogin.com` and answers the
+`/api/validate-attributes` business-rule gate).
 
 ## How it works
 
+Sign-in (and reset password) — browser-delegated:
+
 ```text
 React SPA  ──loginRedirect()──▶  Entra-hosted user flow (ServiceTas_SignUpSignIn)
-                                   │  sign in / sign up / forgot password
-                                   │  email OTP  (OnOtpSend → otp-email-function)
-                                   │  attribute collection
-                                   │     ├─ OnAttributeCollectionStart  (attribute-start-function: email blocklist)
-                                   │     └─ OnAttributeCollectionSubmit  (attribute-submit-function: validation + TFS provisioning)
+                                   │  sign in / forgot password
                                    │  MFA (SMS / Email OTP, enforced by Conditional Access)
                                    │  OnTokenIssuanceStart (token-issuance-function: phone_number claim)
                                    ▼
+React SPA  ◀──redirect back──  tokens in sessionStorage → claims view
+```
+
+Sign-up — native authentication in-app, then a hosted handoff:
+
+```text
+/sign-up (React forms) ──custom-auth SDK──▶ local-proxy.mjs ──▶ ciamlogin.com native-auth API
+   │  email + code  (OnOtpSend → otp-email-function: branded email + sign-up blocklist)
+   │  password + details  (client checks + POST /api/validate-attributes gate;
+   │                       OnAttributeCollectionStart/Submit do NOT fire in native auth)
+   ▼
+account created ──loginRedirect(login_hint)──▶ hosted sign-in
+   │  password, MFA phone registration + SMS verify (step "3/3")
+   ▼
 React SPA  ◀──redirect back──  tokens in sessionStorage → claims view
 ```
 
@@ -31,9 +52,12 @@ React SPA  ◀──redirect back──  tokens in sessionStorage → claims vie
 
 | Path | Purpose |
 |---|---|
-| `src/config/auth-config.ts` | MSAL `PublicClientApplication` config (authority, redirect URI, scopes). **Set `clientId`.** |
+| `src/config/auth-config.ts` | MSAL `PublicClientApplication` config (authority, redirect URI, scopes) plus `customAuthConfig` for the native-auth sign-up flow. **Set `clientId`.** |
 | `src/auth/AuthProvider.tsx` | Initializes MSAL and wraps the app in `MsalProvider`. |
+| `src/auth/AuthClientProvider.tsx` | Initializes the custom-auth (native authentication) SDK client — used only by `/sign-up` (its layout scopes the provider to that route). |
 | `src/app/page.tsx` | Branded home: sign-in/sign-up triggers when signed out; ID-token claims view when signed in. |
+| `src/app/sign-up/` | **In-app native-auth sign-up** (ported from the native-auth sample): email → code → password/details, then a hosted sign-in handoff with `login_hint`. |
+| `src/app/shared/` | Sign-up form components/styles/utils shared with the native-auth sample (email/code steps, error rendering, blocklist, password rules, the `/api/validate-attributes` client). |
 | `src/app/reset-password/page.tsx` | Routes the user into the hosted flow's *Forgot password?* (SSPR). |
 | `src/app/security/page.tsx` | **Passkey management** — register / list / delete passkeys (FIDO2). |
 | `src/services/passkey-service.ts` | WebAuthn ceremony + client for the local proxy's passkey routes. |
@@ -62,13 +86,16 @@ React SPA  ◀──redirect back──  tokens in sessionStorage → claims vie
    npm run dev
    ```
 
-4. Open <http://localhost:3000> and select **Log in** or **Create an account**. You're
-   redirected to the hosted Service Tasmania pages and returned signed in; the home
-   page then shows the decoded ID-token claims (including the custom `phone_number`).
+4. Open <http://localhost:3000> and select **Log in** or **Create an account**.
+   Log in redirects to the hosted Service Tasmania pages and returns you signed
+   in; the home page then shows the decoded ID-token claims (including the
+   custom `phone_number`).
 
-No `cors.js` / proxy is required for sign-in (that was a native-auth concern).
-The **passkey** and **My account** self-service pages do need the local
-`local-proxy.mjs` (one server, run with `npm run proxy`) — see below.
+No proxy is required for **sign-in**. **Sign-up** (`/sign-up`, in-app native
+auth) does need `local-proxy.mjs` running (`npm run proxy`) — it forwards the
+native-auth REST calls to `ciamlogin.com` (which sends no CORS headers) and
+answers the `/api/validate-attributes` gate. The **passkey** and **My account**
+self-service pages need the same proxy — see below.
 
 ## Passkeys (FIDO2)
 

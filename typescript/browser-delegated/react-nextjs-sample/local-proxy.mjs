@@ -29,6 +29,12 @@
  *     GET  /webview                           cookie-gated in-app web content
  *     GET  /webview/profile                   second page (proves session persists)
  *
+ *   Native-auth sign-up (the in-app /sign-up flow; no token — no user exists yet):
+ *     POST /api/validate-attributes           server-side sign-up attribute rules
+ *     ANY  /api/signup/*, /api/oauth2/*       CORS passthrough to ciamlogin.com
+ *                                             (the native-auth REST endpoints send
+ *                                             no CORS headers of their own)
+ *
  * (Previously two separate servers — passkey-proxy.mjs and account-proxy.mjs —
  * that both bound port 3001, so only one could run at a time. They share the same
  * token-verification + app-only-Graph machinery and their routes never overlap,
@@ -1459,6 +1465,138 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // E.164-ish: "+", country code, optional spaces. Graph wants "+{cc} {number}".
 const PHONE_RE = /^\+[0-9][0-9\s]{6,17}$/;
 
+/* ---------------------- native-auth sign-up (CIAM) ------------------------ */
+
+// The /sign-up page renders the native-auth sign-up flow in React (ported from
+// the native-auth sample). The native-auth REST endpoints on ciamlogin.com send
+// no CORS headers, so the custom-auth SDK is pointed at this proxy
+// (customAuthConfig.customAuth.authApiProxyUrl) and /api/<path> is forwarded to
+// https://<tenant>.ciamlogin.com/<tenantId>/<path>. Mirrors the native-auth
+// sample's cors.js. No credential is involved — this is a plain CORS shim.
+const CIAM_BASE = `https://${TENANT_SUBDOMAIN}.ciamlogin.com/${TENANT_ID}`;
+const CIAM_HOST = `${TENANT_SUBDOMAIN}.ciamlogin.com`;
+
+// Only the native-auth surface is forwarded (sign-up start/challenge/continue
+// plus the oauth2 endpoints the SDK may call) — everything else under /api
+// stays a local, token-gated route.
+const CIAM_PASSTHROUGH_PREFIXES = ["/api/signup/", "/api/oauth2/"];
+
+function isCiamPassthrough(pathname) {
+    return CIAM_PASSTHROUGH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+function proxyToCiam(req, res, url, corsHeaders) {
+    const targetUrl = CIAM_BASE + url.pathname.replace(/^\/api/, "") + url.search;
+
+    const headers = {};
+    for (const [key, value] of Object.entries(req.headers)) {
+        if (key !== "origin" && key !== "host") headers[key] = value;
+    }
+
+    const proxyReq = https.request(
+        targetUrl,
+        { method: req.method, headers: { ...headers, host: CIAM_HOST } },
+        (proxyRes) => {
+            res.writeHead(proxyRes.statusCode ?? 502, { ...proxyRes.headers, ...corsHeaders });
+            proxyRes.pipe(res);
+        }
+    );
+    proxyReq.on("error", (error) => {
+        console.error("CIAM passthrough error:", error);
+        sendJson(res, 502, { error: { message: "Could not reach the sign-up service." } }, corsHeaders);
+    });
+    req.pipe(proxyReq);
+}
+
+// Server-side mirror of the sign-up attribute business rules (Option A gate).
+// Native auth never fires OnAttributeCollectionSubmit, so the SPA calls
+// POST /api/validate-attributes right before submitAttributes(). KEEP IN SYNC
+// with the client-side checks in src/app/sign-up/components/DetailsStep.tsx
+// (and with the native-auth sample's api/src/attributeValidation.ts, where
+// these rules originate).
+const SIGNUP_MIN_AGE = 16;
+const SIGNUP_MAX_AGE = 120;
+const SIGNUP_NAME_MAX = 64;
+const SIGNUP_HAS_LETTER = /\p{L}/u;
+
+function signUpNameHasForbiddenChar(value) {
+    if (value.includes("<") || value.includes(">")) return true;
+    for (const ch of value) {
+        if (ch.charCodeAt(0) < 0x20) return true;
+    }
+    return false;
+}
+
+function validateSignUpName(value, field, label, errors) {
+    const v = typeof value === "string" ? value.trim() : "";
+    if (v.length === 0) {
+        errors[field] = `Please provide your ${label}.`;
+        return;
+    }
+    if (v.length > SIGNUP_NAME_MAX) {
+        errors[field] = `Your ${label} must be ${SIGNUP_NAME_MAX} characters or fewer.`;
+        return;
+    }
+    if (signUpNameHasForbiddenChar(v) || !SIGNUP_HAS_LETTER.test(v)) {
+        errors[field] = `Please enter a valid ${label}.`;
+    }
+}
+
+function signUpAgeOn(dob, now) {
+    let age = now.getUTCFullYear() - dob.getUTCFullYear();
+    const monthDelta = now.getUTCMonth() - dob.getUTCMonth();
+    if (monthDelta < 0 || (monthDelta === 0 && now.getUTCDate() < dob.getUTCDate())) {
+        age--;
+    }
+    return age;
+}
+
+function validateSignUpDateOfBirth(value, errors) {
+    if (typeof value !== "string" || value.trim().length === 0) {
+        errors.dateOfBirth = "Please provide your date of birth.";
+        return;
+    }
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+    if (!match) {
+        errors.dateOfBirth = "Please enter a valid date of birth.";
+        return;
+    }
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const dob = new Date(Date.UTC(year, month - 1, day));
+    if (dob.getUTCFullYear() !== year || dob.getUTCMonth() !== month - 1 || dob.getUTCDate() !== day) {
+        errors.dateOfBirth = "Please enter a valid date of birth.";
+        return;
+    }
+    const now = new Date();
+    if (dob.getTime() > now.getTime()) {
+        errors.dateOfBirth = "Your date of birth can't be in the future.";
+        return;
+    }
+    const age = signUpAgeOn(dob, now);
+    if (age < SIGNUP_MIN_AGE) {
+        errors.dateOfBirth = `You must be at least ${SIGNUP_MIN_AGE} years old to create an account.`;
+        return;
+    }
+    if (age > SIGNUP_MAX_AGE) {
+        errors.dateOfBirth = "Please enter a valid date of birth.";
+    }
+}
+
+function validateSignUpAttributes(input) {
+    const errors = {};
+    const data = input || {};
+    validateSignUpName(data.givenName, "givenName", "given name", errors);
+    validateSignUpName(data.surname, "surname", "family name", errors);
+    validateSignUpDateOfBirth(data.dateOfBirth, errors);
+    if (data.termsAccepted !== true) {
+        errors.termsAccepted = "You must agree to the terms and conditions.";
+    }
+    const valid = Object.keys(errors).length === 0;
+    return { valid, errors, message: valid ? undefined : Object.values(errors)[0] };
+}
+
 /* -------------------------------- server ---------------------------------- */
 
 // Pin CORS to known dev origins rather than `*` — this proxy wields app-only
@@ -1499,7 +1637,12 @@ function corsHeadersFor(req) {
         // origin, never "*" — which is why ALLOWED_ORIGINS is pinned above.
         "Access-Control-Allow-Credentials": "true",
         "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        // The x-client-*/client-request-id entries are the MSAL custom-auth
+        // SDK's telemetry headers, sent on the native-auth sign-up calls this
+        // proxy forwards to ciamlogin.com.
+        "Access-Control-Allow-Headers":
+            "Content-Type, Authorization, x-client-SKU, x-client-VER, x-client-OS, " +
+            "x-client-CPU, x-client-current-telemetry, x-client-last-telemetry, client-request-id",
         "Access-Control-Max-Age": "86400",
     };
 }
@@ -1559,6 +1702,24 @@ const handleRequest = async (req, res) => {
     // operate on that cookie, and the admin routes verify their own Bearer token.
     if (url.pathname.startsWith("/api/impersonation/") || url.pathname.startsWith("/impersonate-view")) {
         await handleImpersonation(req, res, route, url, corsHeaders);
+        return;
+    }
+
+    // Native-auth sign-up (the in-app /sign-up flow). Handled before the
+    // Bearer-token gate: sign-up happens before any user exists, so there is no
+    // token to present.
+    if (req.method === "POST" && url.pathname === "/api/validate-attributes") {
+        let result;
+        try {
+            result = validateSignUpAttributes(await parseJsonBody(req));
+        } catch {
+            result = { valid: false, errors: {}, message: "Invalid request body." };
+        }
+        sendJson(res, 200, result, corsHeaders);
+        return;
+    }
+    if (isCiamPassthrough(url.pathname)) {
+        proxyToCiam(req, res, url, corsHeaders);
         return;
     }
 
@@ -1737,6 +1898,7 @@ const server = useHttps
 server.listen(PORT, "127.0.0.1", () => {
     console.log(`Local Graph proxy listening on ${scheme}://${proxyHost}:${PORT}`);
     console.log(`  passkeys: /api/passkeys   account: /api/account   webview: /webview   impersonation: /api/impersonation`);
+    console.log(`  native-auth sign-up: /api/signup + /api/oauth2 -> ${CIAM_BASE}   validation: /api/validate-attributes`);
     console.log(
         `  impersonation admins: ${
             IMPERSONATION_ALLOW_ANY_ADMIN

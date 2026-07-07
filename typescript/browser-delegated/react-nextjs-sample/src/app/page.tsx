@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
     AuthenticatedTemplate,
     UnauthenticatedTemplate,
@@ -12,7 +13,6 @@ import {
     accountFeatureAvailable,
     appLabel,
     loginRequest,
-    signUpRequest,
     peerAppUrl,
     peerAppLabel,
     signInHintFromClaims,
@@ -274,6 +274,7 @@ function SignedInView() {
 }
 
 function SignedOutView() {
+    const router = useRouter();
     const { instance, inProgress } = useMsal();
     const busy = inProgress !== InteractionStatus.None;
 
@@ -291,9 +292,13 @@ function SignedOutView() {
                         <h2 style={styles.columnHeading}>New here? Create an account</h2>
                         <p style={styles.columnLead}>Create an account if you are new to this portal.</p>
 
+                        {/* In-app native-auth sign-up (was a hosted prompt=create
+                            redirect — see signUpRequest in auth-config for the
+                            fallback). Rendering the flow in React is what the
+                            /sign-up route exists for. */}
                         <button
                             style={styles.primaryButton}
-                            onClick={() => instance.loginRedirect(signUpRequest)}
+                            onClick={() => router.push("/sign-up")}
                             disabled={busy}
                         >
                             Create an account

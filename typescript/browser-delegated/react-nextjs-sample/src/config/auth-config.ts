@@ -4,15 +4,19 @@ import {
     RedirectRequest,
     EndSessionRequest,
 } from "@azure/msal-browser";
+import { CustomAuthConfiguration } from "@azure/msal-browser/custom-auth";
 
 /**
  * Browser-delegated (redirect) configuration for the Service Tasmania POC on
  * Microsoft Entra External ID.
  *
  * Unlike the native-auth sample (which renders every form in React and proxies
- * the native-auth REST API), this app hands the whole sign-up / sign-in / reset
- * experience to the Entra-hosted user-flow pages. MSAL only kicks off the
- * redirect and reads the resulting tokens — so there is NO CORS proxy here.
+ * the native-auth REST API), this app hands the sign-in / reset experience to
+ * the Entra-hosted user-flow pages. MSAL only kicks off the redirect and reads
+ * the resulting tokens. The ONE exception is sign-up: /sign-up renders the
+ * native-auth sign-up flow in React (see customAuthConfig below), then hands
+ * the brand-new account off to a hosted sign-in redirect — so the local proxy
+ * doubles as the native-auth CORS proxy for that flow.
  *
  * Authority note: for External ID you do NOT put the user-flow name in the
  * authority (that was a B2C custom-policy convention). The authority is just the
@@ -133,9 +137,13 @@ export const loginRequest: RedirectRequest = {
 };
 
 /**
- * Sign-up request. Entra External ID honours `prompt=create` to take the user
- * straight to the sign-up experience of the bound user flow, mirroring the B2C
- * "Sign up now" entry point on the combined page.
+ * Hosted sign-up request. Entra External ID honours `prompt=create` to take the
+ * user straight to the sign-up experience of the bound user flow, mirroring the
+ * B2C "Sign up now" entry point on the combined page.
+ *
+ * No longer the primary entry point: the app now renders sign-up itself with
+ * native authentication (see /sign-up and customAuthConfig below). Kept as the
+ * documented fallback to the fully-hosted sign-up experience.
  */
 export const signUpRequest: RedirectRequest = {
     ...loginRequest,
@@ -361,3 +369,64 @@ export const ngcmfaClaims = JSON.stringify({
     id_token: { amr: { essential: true, values: ["ngcmfa"] } },
     access_token: { amr: { essential: true, values: ["ngcmfa"] } },
 });
+
+/* ------------------------------------------------------------------------- *
+ * Native-auth sign-up (in-app React forms; ported from the native-auth sample)
+ *
+ * NOTE: this section must stay BELOW resolveProxyOrigin/PROXY_PORT —
+ * customAuthConfig is initialized at module evaluation, so anything it calls
+ * must already be defined (a `const` above it is fine; one below it is a
+ * temporal-dead-zone ReferenceError in the browser).
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Where the custom-auth SDK reaches the native-auth REST endpoints. They send
+ * no CORS headers, so a same-origin-ish proxy is required:
+ *   - plain localhost dev        -> local-proxy.mjs on :3001 (npm run proxy)
+ *   - unified HTTPS dev hosts    -> https://api.<tenant>.ciamlogin.com:3001
+ *   - deployed                   -> the site's own /api (requires a backend that
+ *                                   forwards /signup + /oauth2 to ciamlogin.com,
+ *                                   like the native-auth sample's SWA function)
+ */
+function resolveNativeAuthProxyUrl(): string {
+    if (typeof window === "undefined") {
+        // Build-time prerender only — never used for live requests.
+        return "http://localhost:3001/api";
+    }
+    const host = window.location.hostname;
+    const rpId = `${TENANT_SUBDOMAIN}.ciamlogin.com`;
+    if (host === "localhost" || host === "127.0.0.1" || host === rpId || host.endsWith(`.${rpId}`)) {
+        return `${resolveProxyOrigin()}/api`;
+    }
+    return `${window.location.origin}/api`;
+}
+
+/**
+ * Configuration for CustomAuthPublicClientApplication (the native-auth SDK),
+ * used ONLY by the /sign-up flow. Same app registration and tenant as
+ * msalConfig — native auth is enabled on it (the native-auth sample runs
+ * against it) — and the same sessionStorage cache location.
+ *
+ * After sign-up completes the page does NOT use the native flow's tokens: it
+ * hands off to a hosted `loginRedirect` seeded with login_hint (native auth
+ * cannot mint the Entra web session cookie, so signing in via the hosted page
+ * is what gives this app its normal browser SSO session).
+ */
+export const customAuthConfig: CustomAuthConfiguration = {
+    customAuth: {
+        challengeTypes: ["password", "oob", "redirect"],
+        capabilities: ["mfa_required", "registration_required"],
+        authApiProxyUrl: resolveNativeAuthProxyUrl(),
+    },
+    auth: {
+        clientId: CLIENT_ID,
+        authority: `https://${TENANT_SUBDOMAIN}.ciamlogin.com/${TENANT_ID}`,
+        redirectUri: "/",
+        postLogoutRedirectUri: "/",
+        navigateToLoginRequestUrl: false,
+    },
+    cache: {
+        cacheLocation: "sessionStorage",
+        storeAuthStateInCookie: false,
+    },
+};

@@ -52,6 +52,57 @@ a {
   text-decoration: underline;
 }
 
+/* Used by the ported native-auth sign-up forms (resend-code / cancel actions). */
+.st-text-button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--st-primary);
+  font-family: var(--font-nunito), "Nunito", sans-serif;
+  font-weight: 800;
+  appearance: none;
+}
+
+.st-text-button:hover,
+.st-text-button:focus {
+  background: transparent;
+  color: var(--st-primary-hover);
+  text-decoration: underline;
+  outline: none;
+}
+
+.st-text-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  text-decoration: none;
+}
+
+.st-cancel-button {
+  background: transparent;
+  border: none;
+  padding: 0.875rem 3rem;
+  cursor: pointer;
+  color: var(--st-primary);
+  font-family: var(--font-nunito), "Nunito", sans-serif;
+  font-size: 1.125rem;
+  font-weight: 800;
+  appearance: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.st-cancel-button:hover,
+.st-cancel-button:focus {
+  background-color: var(--st-primary);
+  color: #ffffff;
+  outline: none;
+}
+
+.st-cancel-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .st-toggle-button {
   padding: 0.5rem 1.25rem;
   background-color: #ffffff;
