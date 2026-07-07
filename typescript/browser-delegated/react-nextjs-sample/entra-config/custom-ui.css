@@ -108,7 +108,7 @@ body,
 .ext-link,
 a,
 a:link {
-  color: #29b176 !important;
+  color: #267151 !important;
   font-weight: 600 !important;
   font-size: 14px !important;
 }
@@ -116,25 +116,4 @@ a:link {
 .ext-link:hover,
 a:hover {
   color: #1e5a40 !important;
-}
-
-/* ---- Validation / error text (from showValidationError / showBlockPage) ---- */
-.ext-error,
-.ext-field-item-error {
-  color: #b91c1c !important;
-  font-weight: 600 !important;
-}
-
-/* ---- Footer ----
-   IMPORTANT — Entra EXTERNAL ID's custom-CSS validator enforces a NARROWER selector
-   allowlist than the published CSS template reference. Verified empirically: it
-   REJECTS `.ext-footer-item` (even though the reference lists it), the `:hover`
-   pseudo-class on footer items, and ALL pseudo-elements (`::before`/`::after`).
-   The only footer selector that validates is `.ext-footer` itself — so there is no
-   way to recolour the footer link items (Privacy & Cookies / Terms of Use) or to
-   inject an Acknowledgement-of-Country line from CSS.
-*/
-.ext-footer {
-  background-color: #333333 !important;
-  padding: 20px 0 !important;
 }
